@@ -174,9 +174,9 @@ app_license = "mit"
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "mazeed_custom_press.event.get_events"
-# }
+override_whitelisted_methods = {
+	"press.press.api.saas.new_saas_site": "mazeed_custom_press.api.saas.new_saas_site"
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
@@ -196,12 +196,12 @@ app_license = "mit"
 
 # Request Events
 # ----------------
-# before_request = ["mazeed_custom_press.utils.before_request"]
+before_request = ["mazeed_custom_press.overrides.saas_pool.apply_overrides"]
 # after_request = ["mazeed_custom_press.utils.after_request"]
 
 # Job Events
 # ----------
-# before_job = ["mazeed_custom_press.utils.before_job"]
+before_job = ["mazeed_custom_press.overrides.saas_pool.apply_overrides"]
 # after_job = ["mazeed_custom_press.utils.after_job"]
 
 # User Data Protection
@@ -246,4 +246,3 @@ app_license = "mit"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
