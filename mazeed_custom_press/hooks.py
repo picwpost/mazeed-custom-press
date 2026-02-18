@@ -175,7 +175,7 @@ app_license = "mit"
 # ------------------------------
 #
 override_whitelisted_methods = {
-	"press.press.api.saas.new_saas_site": "mazeed_custom_press.api.saas.new_saas_site"
+	"press.api.saas.new_saas_site": "mazeed_custom_press.api.saas.new_saas_site"
 }
 #
 # each overriding function accepts a `data` argument;
@@ -196,12 +196,18 @@ override_whitelisted_methods = {
 
 # Request Events
 # ----------------
-before_request = ["mazeed_custom_press.overrides.saas_pool.apply_overrides"]
+before_request = [
+	"mazeed_custom_press.overrides.saas_pool.apply_overrides",
+	"mazeed_custom_press.overrides.saas_site.apply_overrides",
+]
 # after_request = ["mazeed_custom_press.utils.after_request"]
 
 # Job Events
 # ----------
-before_job = ["mazeed_custom_press.overrides.saas_pool.apply_overrides"]
+before_job = [
+	"mazeed_custom_press.overrides.saas_pool.apply_overrides",
+	"mazeed_custom_press.overrides.saas_site.apply_overrides",
+]
 # after_job = ["mazeed_custom_press.utils.after_job"]
 
 # User Data Protection
