@@ -34,7 +34,7 @@ def custom_create_one(self, pool_name: str = ""):
 				"apps": [{"app": app} for app in apps],
 			}
 		)
-		site._update_configuration({"pause_scheduler": 1})
+		site.update_site_config({"pause_scheduler": 1})
 		subscription_docs = create_app_subscriptions(site, self.app)
 		site.insert()
 		set_site_in_subscription_docs(subscription_docs, site.name)
