@@ -23,8 +23,8 @@ def new_saas_site(subdomain, app, config=None):
 		site.create_subscription(get_saas_site_plan(app))
 
 	site.update_configuration(config or {}, save=False)
-	site.reload()
 	site.save(ignore_permissions=True)
+	site.reload()
 
 	frappe.db.commit()
 
