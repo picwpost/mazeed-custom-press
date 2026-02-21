@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-21 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "release_group",
+  "column_break_1",
+  "user",
+  "mazeed_theme_branch",
+  "feature_flag_branch"
+ ],
+ "fields": [
+  {
+   "fieldname": "release_group",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Release Group",
+   "options": "Release Group",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "mazeed_theme_branch",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mazeed Theme Branch"
+  },
+  {
+   "fieldname": "feature_flag_branch",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Feature Flag Branch"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-02-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mazeed Custom Press",
+ "name": "Release Group Branchs",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "title_field": "release_group"
+}
