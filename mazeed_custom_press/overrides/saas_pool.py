@@ -24,9 +24,8 @@ def _send_pool_creation_failure_email(app, domain, subdomain, bench, apps, error
 			f"<b>Apps:</b> {frappe.as_unicode(apps)}<br>"
 			f"<b>Error:</b> {frappe.as_unicode(error)}"
 		),
-		now=False,
+		 delayed=False,
 	)
-
 
 def custom_create_one(self, pool_name: str = ""):
 	"""Override for press.press.doctype.site.saas_pool.SaasSitePool.create_one."""
