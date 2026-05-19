@@ -1,6 +1,9 @@
 import frappe
 
+from press.agent import Agent
 from press.press.doctype.site.saas_site import SaasSite
+from press.utils import log_error
+from press.utils.dns import create_dns_record
 
 
 class CustomSaasSite(SaasSite):
@@ -9,6 +12,34 @@ class CustomSaasSite(SaasSite):
 	def update_configuration(self, config=None, save: bool = True):
 		config = self._normalize_config(config)
 		return self._update_configuration(config, save=save)
+
+	def rename_pooled_site(self, account_request=None, subdomain=None, config=None):
+		"""Rename a pooled site and carry any config payload into the rename job."""
+		self._pending_rename_config = self._normalize_config(config)
+		try:
+			return super().rename_pooled_site(account_request=account_request, subdomain=subdomain)
+		finally:
+			self._pending_rename_config = None
+
+	def rename(self, new_name: str):
+		config = getattr(self, "_pending_rename_config", None)
+		self.check_duplicate_site()
+		create_dns_record(doc=self, record_name=self._get_site_name(self.subdomain))
+		agent = Agent(self.server)
+		if config:
+			agent.rename_site(self, new_name, config=config)
+		else:
+			agent.rename_site(self, new_name)
+		self.rename_upstream(new_name)
+		self.status = "Pending"
+		self.save()
+
+		try:
+			# remove old dns record from route53 after rename
+			proxy_server = frappe.get_value("Server", self.server, "proxy_server")
+			self.remove_dns_record(proxy_server)
+		except Exception:
+			log_error("Removing Old Site from Route53 Failed")
 
 	def _normalize_config(self, config) -> dict:
 		"""Accept dict/list/json-string config payloads and normalize to dict."""
