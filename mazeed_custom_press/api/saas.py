@@ -65,6 +65,7 @@ def new_saas_site(subdomain, app, config=None):
 		site = CustomSaasSite(app=app, subdomain=subdomain).insert(ignore_permissions=True)
 		site.create_subscription(get_saas_site_plan(app))
 		if config_payload:
+			site.reload()
 			site.update_site_config(config_payload)
 			site.reload()
 
