@@ -12,6 +12,12 @@ bench get-app $URL_OF_THIS_REPO --branch develop
 bench install-app mazeed_custom_press
 ```
 
+### Behavior Notes
+
+- Pooled SaaS site creation now forwards config into the rename flow instead of creating a separate `Update Site Configuration` job.
+- This avoids the stale-site race that could happen when rename completed before the follow-up config update ran.
+- Non-pooled SaaS site creation keeps the existing config update flow.
+
 ### Contributing
 
 This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
