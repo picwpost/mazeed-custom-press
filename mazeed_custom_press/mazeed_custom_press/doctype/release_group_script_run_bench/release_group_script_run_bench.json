@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "creation": "2026-05-26 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "bench",
+  "status",
+  "skip_reason",
+  "sites",
+  "stdout",
+  "stderr",
+  "exit_code",
+  "timed_out",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "bench",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bench",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nSkipped\nSuccess\nFailure",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "skip_reason",
+   "fieldtype": "Long Text",
+   "label": "Skip Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sites",
+   "fieldtype": "Long Text",
+   "label": "Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stdout",
+   "fieldtype": "Long Text",
+   "label": "Stdout",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stderr",
+   "fieldtype": "Long Text",
+   "label": "Stderr",
+   "read_only": 1
+  },
+  {
+   "fieldname": "exit_code",
+   "fieldtype": "Int",
+   "label": "Exit Code",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "timed_out",
+   "fieldtype": "Check",
+   "label": "Timed Out",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-26 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mazeed Custom Press",
+ "name": "Release Group Script Run Bench",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}
+

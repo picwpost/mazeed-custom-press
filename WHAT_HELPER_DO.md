@@ -111,3 +111,11 @@ Defined in `apps/mazeed_custom_press/mazeed_custom_press/api/release_group_branc
 The custom APIs are restricted to:
 - `System Manager` (via `frappe.only_for("System Manager")`).
 
+## 8) Release Group Script Jobs
+
+The release group script feature now has its own DocType docs:
+
+- `mazeed_custom_press/mazeed_custom_press/doctype/release_group_script_run/README.md`
+- `mazeed_custom_press/mazeed_custom_press/doctype/release_group_script_run_bench/README.md`
+
+These docs describe the exact public routes, team-scoped access model, background execution flow, and per-bench result storage used by the new script-run job system.

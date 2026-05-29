@@ -1,0 +1,131 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-05-26 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "team",
+  "status",
+  "column_break_1",
+  "timeout",
+  "requested_benches",
+  "raw_script",
+  "bench_runs",
+  "result_payload",
+  "column_break_2",
+  "start",
+  "end",
+  "duration"
+ ],
+ "fields": [
+  {
+   "fieldname": "team",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Team",
+   "options": "Team",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nSuccess\nFailure",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "300",
+   "fieldname": "timeout",
+   "fieldtype": "Int",
+   "label": "Timeout",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "requested_benches",
+   "fieldtype": "Code",
+   "label": "Requested Benches",
+   "options": "JSON",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "raw_script",
+   "fieldtype": "Long Text",
+   "label": "Raw Script",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "bench_runs",
+   "fieldtype": "Table",
+   "label": "Bench Runs",
+   "options": "Release Group Script Run Bench"
+  },
+  {
+   "fieldname": "result_payload",
+   "fieldtype": "Long Text",
+   "label": "Result Payload",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "start",
+   "fieldtype": "Datetime",
+   "label": "Start",
+   "read_only": 1
+  },
+  {
+   "fieldname": "end",
+   "fieldtype": "Datetime",
+   "label": "End",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duration",
+   "fieldtype": "Duration",
+   "label": "Duration",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-26 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mazeed Custom Press",
+ "name": "Release Group Script Run",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
+
