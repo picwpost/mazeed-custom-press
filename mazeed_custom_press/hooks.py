@@ -202,8 +202,6 @@ before_request = [
 ]
 # after_request = ["mazeed_custom_press.utils.after_request"]
 
-page_renderer = ["mazeed_custom_press.website.release_group_script.ReleaseGroupScriptPage"]
-
 # Job Events
 # ----------
 before_job = [
