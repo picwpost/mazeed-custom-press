@@ -22,7 +22,9 @@
   "column_break_2",
   "start",
   "end",
-  "duration"
+  "duration",
+  "row_count",
+  "error_count"
  ],
  "fields": [
   {
@@ -137,6 +139,18 @@
    "fieldname": "duration",
    "fieldtype": "Duration",
    "label": "Duration",
+   "read_only": 1
+  },
+  {
+   "fieldname": "row_count",
+   "fieldtype": "Int",
+   "label": "Row Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_count",
+   "fieldtype": "Int",
+   "label": "Error Count",
    "read_only": 1
   }
  ],

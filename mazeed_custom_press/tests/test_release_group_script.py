@@ -319,23 +319,36 @@ class TestProcessViaAgent(FrappeTestCase):
 
 		return team, bench, doc
 
-	def _make_csv_b64(self, rows: list[dict]) -> str:
-		buf = io.StringIO()
-		fieldnames = ["bench", "status", "skip_reason", "sites", "stdout", "stderr", "exit_code", "timed_out", "error"]
-		writer = csv.DictWriter(buf, fieldnames=fieldnames)
-		writer.writeheader()
-		writer.writerows(rows)
-		return base64.b64encode(buf.getvalue().encode()).decode()
+	def _make_agent_response(self, loadable: list[str], rows: list[str], skipped: dict | None = None, errors: dict | None = None) -> dict:
+		skipped = skipped or {}
+		errors = errors or {}
+		csv_b64 = base64.b64encode("\n".join(rows).encode()).decode()
+		return {
+			"status": "Success",
+			"data": {
+				"csv": csv_b64,
+				"row_count": len(rows),
+				"error_count": len(skipped) + len(errors),
+			},
+			"steps": [
+				{
+					"name": "Validate Bench List",
+					"status": "Success",
+					"data": {"loadable": loadable, "skipped": skipped},
+				},
+				{
+					"name": "Run Script on All Benches",
+					"status": "Success",
+					"data": {"rows": rows, "errors": errors},
+				},
+			],
+		}
 
 	def test_sends_correct_payload_to_agent(self):
 		_, bench, doc = self._make_job_with_agent_host()
-		csv_b64 = self._make_csv_b64([
-			{"bench": bench.name, "status": "Success", "skip_reason": "", "sites": "[]",
-			 "stdout": "ok", "stderr": "", "exit_code": "0", "timed_out": "0", "error": ""},
-		])
 		mock_agent = MagicMock()
 		mock_agent.post.return_value = {"job": "test-job-id"}
-		mock_agent.get.return_value = {"status": "Success", "data": {"output": csv_b64}}
+		mock_agent.get.return_value = self._make_agent_response([bench.name], ["ok"])
 
 		with patch(
 			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.Agent",
@@ -354,16 +367,12 @@ class TestProcessViaAgent(FrappeTestCase):
 
 	def test_polls_until_success(self):
 		_, bench, doc = self._make_job_with_agent_host()
-		csv_b64 = self._make_csv_b64([
-			{"bench": bench.name, "status": "Success", "skip_reason": "", "sites": "[]",
-			 "stdout": "", "stderr": "", "exit_code": "0", "timed_out": "0", "error": ""},
-		])
 		mock_agent = MagicMock()
 		mock_agent.post.return_value = {"job": "test-job-id"}
 		mock_agent.get.side_effect = [
 			{"status": "Running"},
 			{"status": "Running"},
-			{"status": "Success", "data": {"output": csv_b64}},
+			self._make_agent_response([bench.name], ["hi"]),
 		]
 
 		with (
@@ -381,15 +390,11 @@ class TestProcessViaAgent(FrappeTestCase):
 		doc.reload()
 		self.assertEqual(doc.agent_job_id, "test-job-id")
 
-	def test_populates_bench_runs_from_csv(self):
+	def test_populates_bench_runs_from_agent_response(self):
 		_, bench, doc = self._make_job_with_agent_host()
-		csv_b64 = self._make_csv_b64([
-			{"bench": bench.name, "status": "Success", "skip_reason": "", "sites": '["site1.example.com"]',
-			 "stdout": "output text", "stderr": "warn", "exit_code": "0", "timed_out": "0", "error": ""},
-		])
 		mock_agent = MagicMock()
 		mock_agent.post.return_value = {"job": "j1"}
-		mock_agent.get.return_value = {"status": "Success", "data": {"output": csv_b64}}
+		mock_agent.get.return_value = self._make_agent_response([bench.name], ["output text"])
 
 		with (
 			patch(
@@ -404,10 +409,39 @@ class TestProcessViaAgent(FrappeTestCase):
 			doc.reload()
 
 		self.assertEqual(doc.status, "Success")
+		self.assertEqual(doc.row_count, 1)
+		self.assertEqual(doc.error_count, 0)
 		row = doc.bench_runs[0]
 		self.assertEqual(row.status, "Success")
 		self.assertEqual(row.stdout, "output text")
-		self.assertEqual(row.stderr, "warn")
+
+	def test_skipped_bench_marked_correctly(self):
+		_, bench, doc = self._make_job_with_agent_host()
+		skip_reason = "[Errno 2] No such file or directory: '/home/frappe/benches/bench/sites/common_site_config.json'"
+		mock_agent = MagicMock()
+		mock_agent.post.return_value = {"job": "j2"}
+		mock_agent.get.return_value = self._make_agent_response(
+			loadable=[],
+			rows=[],
+			skipped={bench.name: skip_reason},
+		)
+
+		with (
+			patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.Agent",
+				return_value=mock_agent,
+			),
+			patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.time.sleep"
+			),
+		):
+			doc.process()
+			doc.reload()
+
+		self.assertEqual(doc.status, "Failure")
+		row = doc.bench_runs[0]
+		self.assertEqual(row.status, "Skipped")
+		self.assertEqual(row.skip_reason, skip_reason)
 
 	def test_subprocess_path_still_works_when_no_agent_host(self):
 		team = create_test_press_admin_team()

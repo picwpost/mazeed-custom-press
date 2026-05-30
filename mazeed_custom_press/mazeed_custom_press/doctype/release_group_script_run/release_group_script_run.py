@@ -38,6 +38,8 @@ class ReleaseGroupScriptRun(Document):
 		agent_host_server: DF.Data | None
 		agent_job_id: DF.Data | None
 		agent_trace: DF.Code | None
+		error_count: DF.Int | None
+		row_count: DF.Int | None
 		bench_runs: DF.Table["ReleaseGroupScriptRunBench"]
 		duration: DF.Duration | None
 		end: DF.Datetime | None
@@ -161,11 +163,8 @@ class ReleaseGroupScriptRun(Document):
 			time.sleep(5)
 
 		job_data = status_resp.get("data") or {}
-		csv_b64 = job_data.get("output") or ""
-
-		if csv_b64:
-			self._populate_bench_runs_from_csv(csv_b64)
-			self.result_payload = csv_b64
+		if job_data.get("csv"):
+			self._populate_bench_runs_from_agent_response(status_resp)
 		else:
 			error_detail = (
 				job_data.get("traceback")
@@ -185,27 +184,42 @@ class ReleaseGroupScriptRun(Document):
 				reference_name=self.name,
 			)
 
-		has_failures = any(r.status != "Success" for r in self.bench_runs)
+		has_failures = any(r.status not in ("Success", "Skipped") for r in self.bench_runs)
 		self.status = "Failure" if has_failures else "Success"
 
-	def _populate_bench_runs_from_csv(self, csv_b64: str):
-		raw = base64.b64decode(csv_b64).decode("utf-8")
-		rows_by_bench = {
-			row["bench"]: row
-			for row in csv.DictReader(io.StringIO(raw))
-		}
+	def _populate_bench_runs_from_agent_response(self, status_resp: dict):
+		job_data = status_resp.get("data") or {}
+		steps = status_resp.get("steps") or []
+
+		validate_step = next((s for s in steps if s.get("name") == "Validate Bench List"), {})
+		run_step = next((s for s in steps if s.get("name") == "Run Script on All Benches"), {})
+
+		loadable: list[str] = (validate_step.get("data") or {}).get("loadable") or []
+		skipped: dict = (validate_step.get("data") or {}).get("skipped") or {}
+		rows: list[str] = (run_step.get("data") or {}).get("rows") or []
+		errors: dict = (run_step.get("data") or {}).get("errors") or {}
+
+		rows_by_bench = dict(zip(loadable, rows))
+
 		for run_row in self.bench_runs:
-			data = rows_by_bench.get(run_row.bench)
-			if not data:
-				continue
-			run_row.status = data.get("status") or "Failure"
-			run_row.skip_reason = data.get("skip_reason") or ""
-			run_row.stdout = data.get("stdout") or ""
-			run_row.stderr = data.get("stderr") or ""
-			run_row.exit_code = data.get("exit_code") or None
-			run_row.timed_out = cint(data.get("timed_out") or 0)
-			run_row.sites = data.get("sites") or "[]"
-			run_row.error = data.get("error") or ""
+			bench = run_row.bench
+			if bench in skipped:
+				run_row.status = "Skipped"
+				run_row.skip_reason = str(skipped[bench])
+			elif bench in errors:
+				run_row.status = "Failure"
+				run_row.error = str(errors[bench])
+				run_row.stdout = rows_by_bench.get(bench) or ""
+			elif bench in rows_by_bench:
+				run_row.status = "Success"
+				run_row.stdout = rows_by_bench[bench]
+			else:
+				run_row.status = "Failure"
+				run_row.error = "Bench not present in agent response"
+
+		self.result_payload = job_data.get("csv") or ""
+		self.row_count = cint(job_data.get("row_count") or 0)
+		self.error_count = cint(job_data.get("error_count") or 0)
 
 	def _process_via_subprocess(self):
 		has_failures = False
