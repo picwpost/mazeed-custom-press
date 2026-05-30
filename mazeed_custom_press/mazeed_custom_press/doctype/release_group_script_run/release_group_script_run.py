@@ -113,7 +113,7 @@ class ReleaseGroupScriptRun(Document):
 			self._process_via_subprocess()
 
 		self.end = now_datetime()
-		self.duration = self.end - self.start
+		self.duration = int((self.end - self.start).total_seconds())
 		self.save(ignore_permissions=True)
 		frappe.db.commit()
 		self.publish_update()
