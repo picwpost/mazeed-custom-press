@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -33,16 +34,20 @@ class ReleaseGroupScriptRun(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		agent_host_bench: DF.Data | None
+		agent_host_server: DF.Data | None
+		agent_job_id: DF.Data | None
 		bench_runs: DF.Table["ReleaseGroupScriptRunBench"]
+		duration: DF.Duration | None
 		end: DF.Datetime | None
 		raw_script: DF.Code
+		release_group: DF.Link | None
 		requested_benches: DF.Code
 		result_payload: DF.Code | None
 		start: DF.Datetime | None
 		status: DF.Literal["Pending", "Running", "Success", "Failure"]
 		team: DF.Link
 		timeout: DF.Int
-		duration: DF.Duration | None
 
 	def validate(self):
 		self.timeout = self._clamp_timeout(self.timeout)
@@ -102,6 +107,70 @@ class ReleaseGroupScriptRun(Document):
 		self.save(ignore_permissions=True)
 		frappe.db.commit()
 
+		if self.agent_host_server:
+			self._process_via_agent()
+		else:
+			self._process_via_subprocess()
+
+		self.end = now_datetime()
+		self.duration = self.end - self.start
+		self.save(ignore_permissions=True)
+		frappe.db.commit()
+		self.publish_update()
+
+	def _process_via_agent(self):
+		from press.agent import Agent
+
+		agent = Agent(self.agent_host_server)
+		benches = self.requested_benches_list()
+
+		result = agent.post(
+			"server/run-release-group-script",
+			{
+				"benches": benches,
+				"script": self.raw_script,
+				"timeout": self.timeout,
+			},
+		)
+		job_id = result["job"]
+		self.agent_job_id = job_id
+		self.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		while True:
+			status_resp = agent.get(f"jobs/{job_id}")
+			if status_resp.get("status") in ("Success", "Failure"):
+				break
+			time.sleep(5)
+
+		csv_b64 = (status_resp.get("data") or {}).get("data.csv") or ""
+		if csv_b64:
+			self._populate_bench_runs_from_csv(csv_b64)
+			self.result_payload = csv_b64
+
+		has_failures = any(r.status != "Success" for r in self.bench_runs)
+		self.status = "Failure" if has_failures else "Success"
+
+	def _populate_bench_runs_from_csv(self, csv_b64: str):
+		raw = base64.b64decode(csv_b64).decode("utf-8")
+		rows_by_bench = {
+			row["bench"]: row
+			for row in csv.DictReader(io.StringIO(raw))
+		}
+		for run_row in self.bench_runs:
+			data = rows_by_bench.get(run_row.bench)
+			if not data:
+				continue
+			run_row.status = data.get("status") or "Failure"
+			run_row.skip_reason = data.get("skip_reason") or ""
+			run_row.stdout = data.get("stdout") or ""
+			run_row.stderr = data.get("stderr") or ""
+			run_row.exit_code = data.get("exit_code") or None
+			run_row.timed_out = cint(data.get("timed_out") or 0)
+			run_row.sites = data.get("sites") or "[]"
+			run_row.error = data.get("error") or ""
+
+	def _process_via_subprocess(self):
 		has_failures = False
 
 		for index, bench_name in enumerate(self.requested_benches_list()):
@@ -138,13 +207,8 @@ class ReleaseGroupScriptRun(Document):
 			self.save(ignore_permissions=True)
 			frappe.db.commit()
 
-		self.end = now_datetime()
-		self.duration = self.end - self.start
 		self.status = "Failure" if has_failures else "Success"
 		self.result_payload = self._build_result_payload()
-		self.save(ignore_permissions=True)
-		frappe.db.commit()
-		self.publish_update()
 
 	def _apply_bench_result(self, row, bench_result: dict):
 		row.status = bench_result["status"]
@@ -360,6 +424,42 @@ class ReleaseGroupScriptRun(Document):
 		if job.team != get_current_team():
 			frappe.throw("Not Permitted", frappe.PermissionError)
 		return job.detail()
+
+	@classmethod
+	def create_for_release_group(cls, release_group: str, raw_script: str, timeout=None):
+		team = get_current_team(get_doc=True)
+
+		rg_team = frappe.db.get_value("Release Group", release_group, "team")
+		if rg_team != team.name:
+			frappe.throw("Not Permitted", frappe.PermissionError)
+
+		benches = frappe.get_all(
+			"Bench",
+			filters={"group": release_group, "status": "Active"},
+			fields=["name", "server", "creation"],
+			order_by="creation asc",
+		)
+		if not benches:
+			frappe.throw("No active benches found in this Release Group")
+
+		agent_bench = benches[-1]
+		bench_names = [b.name for b in benches]
+
+		doc = frappe.get_doc(
+			{
+				"doctype": "Release Group Script Run",
+				"team": team.name,
+				"release_group": release_group,
+				"requested_benches": bench_names,
+				"raw_script": raw_script,
+				"timeout": timeout or DEFAULT_TIMEOUT,
+				"status": "Pending",
+				"agent_host_bench": agent_bench.name,
+				"agent_host_server": agent_bench.server,
+			}
+		)
+		doc.insert(ignore_permissions=True)
+		return doc
 
 	@classmethod
 	def create(cls, requested_benches: list[str], raw_script: str, timeout=None):

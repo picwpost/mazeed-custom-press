@@ -8,6 +8,20 @@ from mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.re
 
 
 @frappe.whitelist()
+def run_release_group_script(release_group=None, script=None, timeout=300):
+	if not release_group:
+		frappe.throw("release_group is required")
+	if not script:
+		frappe.throw("script is required")
+	job = ReleaseGroupScriptRun.create_for_release_group(
+		release_group=release_group,
+		raw_script=script,
+		timeout=int(timeout or 300),
+	)
+	return {"job": job.name}
+
+
+@frappe.whitelist()
 def create_release_group_script_job(requested_benches=None, raw_script=None, timeout=None):
 	benches = _normalize_requested_benches(requested_benches)
 

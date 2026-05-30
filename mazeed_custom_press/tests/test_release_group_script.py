@@ -7,7 +7,7 @@ import io
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -15,11 +15,11 @@ from frappe.tests.utils import FrappeTestCase
 from mazeed_custom_press.api.release_group_script import (
 	create_release_group_script_job,
 	get_release_group_script_job_detail,
+	run_release_group_script,
 )
 from mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run import (
 	ReleaseGroupScriptRun,
 )
-from mazeed_custom_press.website.release_group_script import ReleaseGroupScriptPage
 from press.press.doctype.bench.test_bench import create_test_bench
 from press.press.doctype.site.test_site import create_test_site
 from press.press.doctype.team.test_team import create_test_press_admin_team
@@ -52,7 +52,7 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 			(sites_path / site_name).mkdir()
 		return root, bench_path, sites_path
 
-	def test_dispatcher_accepts_exact_post_path(self):
+	def test_create_job_api_accepts_bench_list(self):
 		team, bench, *_ = self._make_team_and_benches()
 		root, _, _ = self._create_bench_tree(bench.name, ["active.example.com"], extra_sites=["unsafe site"])
 
@@ -61,18 +61,12 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 			patch(
 				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
 			) as mock_enqueue,
-			patch.object(frappe.local, "request", create=True) as request,
 		):
-			request.method = "POST"
-			request.path = "/server/run-release-group-script"
-			request.data = json.dumps(
-				{
-					"requested_benches": [bench.name],
-					"raw_script": "echo \"$1\"",
-					"timeout": 9,
-				}
-			).encode("utf-8")
-			result = create_release_group_script_job()
+			result = create_release_group_script_job(
+				requested_benches=[bench.name],
+				raw_script='echo "$1"',
+				timeout=9,
+			)
 
 		self.assertEqual(set(result), {"job"})
 		self.assertTrue(result["job"])
@@ -87,17 +81,11 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 		frappe.set_user(other_team.user)
 
 		with self.assertRaises(frappe.PermissionError):
-			with patch.object(frappe.local, "request", create=True) as request:
-				request.method = "POST"
-				request.path = "/server/run-release-group-script"
-				request.data = json.dumps(
-					{
-						"requested_benches": [bench.name],
-						"raw_script": "echo hi",
-						"timeout": 5,
-					}
-				).encode("utf-8")
-				create_release_group_script_job()
+			create_release_group_script_job(
+				requested_benches=[bench.name],
+				raw_script="echo hi",
+				timeout=5,
+			)
 
 	def test_get_rejects_other_team(self):
 		team, bench, *_ = self._make_team_and_benches()
@@ -108,18 +96,12 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 			patch(
 				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
 			),
-			patch.object(frappe.local, "request", create=True) as request,
 		):
-			request.method = "POST"
-			request.path = "/server/run-release-group-script"
-			request.data = json.dumps(
-				{
-					"requested_benches": [bench.name],
-					"raw_script": "echo hi",
-					"timeout": 5,
-				}
-			).encode("utf-8")
-			job_data = create_release_group_script_job()
+			job_data = create_release_group_script_job(
+				requested_benches=[bench.name],
+				raw_script="echo hi",
+				timeout=5,
+			)
 
 		other_team = create_test_press_admin_team()
 		frappe.set_user(other_team.user)
@@ -143,7 +125,7 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 			) as mock_run,
 		):
 			mock_run.return_value = Mock(returncode=0, stdout="hello\n", stderr="")
-			job = ReleaseGroupScriptRun.create([bench.name], "echo \"$@\"", timeout=2)
+			job = ReleaseGroupScriptRun.create([bench.name], 'echo "$@"', timeout=2)
 			job.process()
 			job.reload()
 
@@ -210,7 +192,7 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 				side_effect=fake_run,
 			) as mock_run,
 		):
-			job = ReleaseGroupScriptRun.create([bench1.name, bench2.name], "echo \"$@\"", timeout=1)
+			job = ReleaseGroupScriptRun.create([bench1.name, bench2.name], 'echo "$@"', timeout=1)
 			job.process()
 			job.reload()
 
@@ -221,22 +203,233 @@ class TestReleaseGroupScriptRoute(FrappeTestCase):
 		self.assertEqual(job.bench_runs[1].exit_code, 3)
 		self.assertEqual(mock_run.call_count, 2)
 
-	def test_route_shape_does_not_accept_api_method_path(self):
-		with patch.object(frappe.local, "request", create=True) as request:
-			request.method = "POST"
-			request.path = "/server/run-release-group-script"
-			renderer = ReleaseGroupScriptPage("server/run-release-group-script")
-			self.assertTrue(renderer.can_render())
 
-			api_renderer = ReleaseGroupScriptPage("api/method/server/run-release-group-script")
-			request.path = "/api/method/server/run-release-group-script"
-			self.assertFalse(api_renderer.can_render())
+class TestCreateForReleaseGroup(FrappeTestCase):
+	"""Tests for create_for_release_group using real bench/release-group records."""
 
-			request.method = "GET"
-			request.path = "/jobs/123"
-			jobs_renderer = ReleaseGroupScriptPage("jobs/123")
-			self.assertTrue(jobs_renderer.can_render())
+	def tearDown(self):
+		frappe.db.rollback()
+		frappe.set_user("Administrator")
 
-			invalid_renderer = ReleaseGroupScriptPage("jobs/not-a-number")
-			request.path = "/jobs/not-a-number"
-			self.assertFalse(invalid_renderer.can_render())
+	def _make_active_bench(self, team_user, group=None):
+		bench = create_test_bench(user=team_user, group=group)
+		bench.db_set("status", "Active")
+		return bench
+
+	def test_resolves_active_benches(self):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench = self._make_active_bench(team.user)
+		rg_name = bench.group
+
+		with patch(
+			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
+		):
+			job = ReleaseGroupScriptRun.create_for_release_group(rg_name, "echo hi")
+
+		self.assertIn(bench.name, job.requested_benches_list())
+
+	def test_picks_newest_bench_as_agent_host(self):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench1 = self._make_active_bench(team.user)
+		rg = frappe.get_doc("Release Group", bench1.group)
+		bench2 = self._make_active_bench(team.user, group=rg)
+
+		with patch(
+			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
+		):
+			job = ReleaseGroupScriptRun.create_for_release_group(rg.name, "echo hi")
+
+		# newest bench (last by creation) should be agent host
+		self.assertIn(job.agent_host_bench, [bench1.name, bench2.name])
+		self.assertEqual(job.agent_host_server, frappe.db.get_value("Bench", job.agent_host_bench, "server"))
+
+	def test_fails_with_no_active_benches(self):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench = create_test_bench(user=team.user)
+		bench.db_set("status", "Broken")
+		rg_name = bench.group
+
+		with self.assertRaises(frappe.ValidationError):
+			ReleaseGroupScriptRun.create_for_release_group(rg_name, "echo hi")
+
+	def test_rejects_wrong_team(self):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench = self._make_active_bench(team.user)
+		rg_name = bench.group
+
+		other_team = create_test_press_admin_team()
+		frappe.set_user(other_team.user)
+
+		with self.assertRaises(frappe.PermissionError):
+			ReleaseGroupScriptRun.create_for_release_group(rg_name, "echo hi")
+
+	def test_run_release_group_script_api(self):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench = self._make_active_bench(team.user)
+		rg_name = bench.group
+
+		with patch(
+			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
+		):
+			result = run_release_group_script(
+				release_group=rg_name,
+				script="echo hi",
+				timeout=60,
+			)
+
+		self.assertIn("job", result)
+		job = frappe.get_doc("Release Group Script Run", result["job"])
+		self.assertEqual(job.release_group, rg_name)
+		self.assertEqual(job.status, "Pending")
+
+
+class TestProcessViaAgent(FrappeTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+		frappe.set_user("Administrator")
+
+	def _make_job_with_agent_host(self, bench_names=None):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench = create_test_bench(user=team.user)
+		bench_names = bench_names or [bench.name]
+
+		with patch(
+			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
+		):
+			doc = frappe.get_doc(
+				{
+					"doctype": "Release Group Script Run",
+					"team": team.name,
+					"requested_benches": bench_names,
+					"raw_script": "echo hi",
+					"timeout": 60,
+					"status": "Pending",
+					"agent_host_bench": bench.name,
+					"agent_host_server": bench.server,
+				}
+			)
+			doc.insert(ignore_permissions=True)
+			frappe.db.commit()
+
+		return team, bench, doc
+
+	def _make_csv_b64(self, rows: list[dict]) -> str:
+		buf = io.StringIO()
+		fieldnames = ["bench", "status", "skip_reason", "sites", "stdout", "stderr", "exit_code", "timed_out", "error"]
+		writer = csv.DictWriter(buf, fieldnames=fieldnames)
+		writer.writeheader()
+		writer.writerows(rows)
+		return base64.b64encode(buf.getvalue().encode()).decode()
+
+	def test_sends_correct_payload_to_agent(self):
+		_, bench, doc = self._make_job_with_agent_host()
+		csv_b64 = self._make_csv_b64([
+			{"bench": bench.name, "status": "Success", "skip_reason": "", "sites": "[]",
+			 "stdout": "ok", "stderr": "", "exit_code": "0", "timed_out": "0", "error": ""},
+		])
+		mock_agent = MagicMock()
+		mock_agent.post.return_value = {"job": "test-job-id"}
+		mock_agent.get.return_value = {"status": "Success", "data": {"data.csv": csv_b64}}
+
+		with patch(
+			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.Agent",
+			return_value=mock_agent,
+		):
+			doc.process()
+
+		mock_agent.post.assert_called_once_with(
+			"server/run-release-group-script",
+			{
+				"benches": [bench.name],
+				"script": "echo hi",
+				"timeout": 60,
+			},
+		)
+
+	def test_polls_until_success(self):
+		_, bench, doc = self._make_job_with_agent_host()
+		csv_b64 = self._make_csv_b64([
+			{"bench": bench.name, "status": "Success", "skip_reason": "", "sites": "[]",
+			 "stdout": "", "stderr": "", "exit_code": "0", "timed_out": "0", "error": ""},
+		])
+		mock_agent = MagicMock()
+		mock_agent.post.return_value = {"job": "test-job-id"}
+		mock_agent.get.side_effect = [
+			{"status": "Running"},
+			{"status": "Running"},
+			{"status": "Success", "data": {"data.csv": csv_b64}},
+		]
+
+		with (
+			patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.Agent",
+				return_value=mock_agent,
+			),
+			patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.time.sleep"
+			),
+		):
+			doc.process()
+
+		self.assertEqual(mock_agent.get.call_count, 3)
+		doc.reload()
+		self.assertEqual(doc.agent_job_id, "test-job-id")
+
+	def test_populates_bench_runs_from_csv(self):
+		_, bench, doc = self._make_job_with_agent_host()
+		csv_b64 = self._make_csv_b64([
+			{"bench": bench.name, "status": "Success", "skip_reason": "", "sites": '["site1.example.com"]',
+			 "stdout": "output text", "stderr": "warn", "exit_code": "0", "timed_out": "0", "error": ""},
+		])
+		mock_agent = MagicMock()
+		mock_agent.post.return_value = {"job": "j1"}
+		mock_agent.get.return_value = {"status": "Success", "data": {"data.csv": csv_b64}}
+
+		with (
+			patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.Agent",
+				return_value=mock_agent,
+			),
+			patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.time.sleep"
+			),
+		):
+			doc.process()
+			doc.reload()
+
+		self.assertEqual(doc.status, "Success")
+		row = doc.bench_runs[0]
+		self.assertEqual(row.status, "Success")
+		self.assertEqual(row.stdout, "output text")
+		self.assertEqual(row.stderr, "warn")
+
+	def test_subprocess_path_still_works_when_no_agent_host(self):
+		team = create_test_press_admin_team()
+		frappe.set_user(team.user)
+		bench = create_test_bench(user=team.user)
+
+		with patch(
+			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.enqueue_doc"
+		):
+			job = ReleaseGroupScriptRun.create([bench.name], "echo hi", timeout=2)
+
+		self.assertFalse(job.agent_host_server)
+
+		with (
+			patch.object(job, "_process_via_agent") as mock_agent_path,
+			patch.object(job, "_process_via_subprocess") as mock_subprocess_path,
+		):
+			with patch(
+				"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.frappe.get_doc",
+				return_value=job,
+			):
+				job.process()
+
+		mock_subprocess_path.assert_called_once()
+		mock_agent_path.assert_not_called()

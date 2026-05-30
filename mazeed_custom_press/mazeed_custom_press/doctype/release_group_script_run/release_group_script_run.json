@@ -7,9 +7,13 @@
  "engine": "InnoDB",
  "field_order": [
   "team",
+  "release_group",
   "status",
   "column_break_1",
   "timeout",
+  "agent_host_bench",
+  "agent_host_server",
+  "agent_job_id",
   "requested_benches",
   "raw_script",
   "bench_runs",
@@ -28,6 +32,14 @@
    "options": "Team",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "release_group",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Release Group",
+   "options": "Release Group",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -51,6 +63,24 @@
    "label": "Timeout",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "agent_host_bench",
+   "fieldtype": "Data",
+   "label": "Agent Host Bench",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_host_server",
+   "fieldtype": "Data",
+   "label": "Agent Host Server",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_job_id",
+   "fieldtype": "Data",
+   "label": "Agent Job ID",
+   "read_only": 1
   },
   {
    "fieldname": "requested_benches",
