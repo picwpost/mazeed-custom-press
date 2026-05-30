@@ -335,7 +335,7 @@ class TestProcessViaAgent(FrappeTestCase):
 		])
 		mock_agent = MagicMock()
 		mock_agent.post.return_value = {"job": "test-job-id"}
-		mock_agent.get.return_value = {"status": "Success", "data": {"data.csv": csv_b64}}
+		mock_agent.get.return_value = {"status": "Success", "data": {"output": csv_b64}}
 
 		with patch(
 			"mazeed_custom_press.mazeed_custom_press.doctype.release_group_script_run.release_group_script_run.Agent",
@@ -363,7 +363,7 @@ class TestProcessViaAgent(FrappeTestCase):
 		mock_agent.get.side_effect = [
 			{"status": "Running"},
 			{"status": "Running"},
-			{"status": "Success", "data": {"data.csv": csv_b64}},
+			{"status": "Success", "data": {"output": csv_b64}},
 		]
 
 		with (
@@ -389,7 +389,7 @@ class TestProcessViaAgent(FrappeTestCase):
 		])
 		mock_agent = MagicMock()
 		mock_agent.post.return_value = {"job": "j1"}
-		mock_agent.get.return_value = {"status": "Success", "data": {"data.csv": csv_b64}}
+		mock_agent.get.return_value = {"status": "Success", "data": {"output": csv_b64}}
 
 		with (
 			patch(

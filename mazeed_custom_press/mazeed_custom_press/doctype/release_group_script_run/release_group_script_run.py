@@ -143,10 +143,30 @@ class ReleaseGroupScriptRun(Document):
 				break
 			time.sleep(5)
 
-		csv_b64 = (status_resp.get("data") or {}).get("data.csv") or ""
+		job_data = status_resp.get("data") or {}
+		csv_b64 = job_data.get("output") or ""
+
 		if csv_b64:
 			self._populate_bench_runs_from_csv(csv_b64)
 			self.result_payload = csv_b64
+		else:
+			error_detail = (
+				job_data.get("traceback")
+				or job_data.get("output")
+				or f"Agent job {job_id} completed with no output (status: {status_resp.get('status')})"
+			)
+			for row in self.bench_runs:
+				row.status = "Failure"
+				row.error = error_detail
+			log_error(
+				"Release Group Script Run: agent returned no CSV",
+				doc=self,
+				agent_job_id=job_id,
+				agent_status=status_resp.get("status"),
+				agent_response=str(status_resp),
+				reference_doctype=self.doctype,
+				reference_name=self.name,
+			)
 
 		has_failures = any(r.status != "Success" for r in self.bench_runs)
 		self.status = "Failure" if has_failures else "Success"
