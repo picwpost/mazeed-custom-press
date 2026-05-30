@@ -37,6 +37,7 @@ class ReleaseGroupScriptRun(Document):
 		agent_host_bench: DF.Data | None
 		agent_host_server: DF.Data | None
 		agent_job_id: DF.Data | None
+		agent_trace: DF.Code | None
 		bench_runs: DF.Table["ReleaseGroupScriptRunBench"]
 		duration: DF.Duration | None
 		end: DF.Datetime | None
@@ -123,22 +124,38 @@ class ReleaseGroupScriptRun(Document):
 
 		agent = Agent(self.agent_host_server)
 		benches = self.requested_benches_list()
+		trace: list[dict] = []
 
-		result = agent.post(
-			"server/run-release-group-script",
-			{
-				"benches": benches,
-				"script": self.raw_script,
-				"timeout": self.timeout,
-			},
-		)
+		post_payload = {"benches": benches, "script": self.raw_script, "timeout": self.timeout}
+		result = agent.post("server/run-release-group-script", post_payload)
+		trace.append({
+			"at": str(now_datetime()),
+			"type": "post",
+			"path": "server/run-release-group-script",
+			"request": post_payload,
+			"response": result,
+		})
 		job_id = result["job"]
 		self.agent_job_id = job_id
+		self.agent_trace = json.dumps(trace, indent=2)
 		self.save(ignore_permissions=True)
 		frappe.db.commit()
 
+		poll = 0
 		while True:
+			poll += 1
 			status_resp = agent.get(f"jobs/{job_id}")
+			trace.append({
+				"at": str(now_datetime()),
+				"type": "get",
+				"poll": poll,
+				"path": f"jobs/{job_id}",
+				"status": status_resp.get("status"),
+				"response": status_resp,
+			})
+			self.agent_trace = json.dumps(trace, indent=2)
+			self.save(ignore_permissions=True)
+			frappe.db.commit()
 			if status_resp.get("status") in ("Success", "Failure"):
 				break
 			time.sleep(5)

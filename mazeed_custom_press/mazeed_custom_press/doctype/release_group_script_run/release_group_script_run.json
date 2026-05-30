@@ -14,6 +14,7 @@
   "agent_host_bench",
   "agent_host_server",
   "agent_job_id",
+  "agent_trace",
   "requested_benches",
   "raw_script",
   "bench_runs",
@@ -80,6 +81,13 @@
    "fieldname": "agent_job_id",
    "fieldtype": "Data",
    "label": "Agent Job ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_trace",
+   "fieldtype": "Code",
+   "label": "Agent Trace",
+   "options": "JSON",
    "read_only": 1
   },
   {
