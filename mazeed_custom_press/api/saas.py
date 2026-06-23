@@ -54,3 +54,64 @@ def new_saas_site(subdomain, app, config=None):
 	frappe.db.commit()
 
 	return site
+
+
+@frappe.whitelist()
+def get_standby_site_for_release_group(release_group):
+	"""Return the first active standby site (setup_wizard_complete=0) on the latest active bench for a Release Group."""
+	frappe.only_for("System Manager")
+
+	rg_name = frappe.db.get_value("Release Group", release_group) or frappe.db.get_value(
+		"Release Group", {"title": release_group}
+	)
+	if not rg_name:
+		frappe.throw(f"Release Group '{release_group}' not found.")
+
+	bench = frappe.db.get_value(
+		"Bench",
+		{"group": rg_name, "status": "Active"},
+		"name",
+		order_by="creation desc",
+	)
+	if not bench:
+		frappe.throw(f"No active bench found for Release Group '{rg_name}'.")
+
+	site = frappe.db.get_value(
+		"Site",
+		{
+			"bench": bench,
+			"status": "Active",
+			"name": ("like", "standby%"),
+			"setup_wizard_complete": 0,
+		},
+		["name", "bench", "status", "setup_wizard_complete"],
+		as_dict=True,
+		order_by="creation asc",
+	)
+	if not site:
+		frappe.throw(f"No available standby site on bench '{bench}'.")
+
+	return site
+
+
+@frappe.whitelist()
+def send_setup_wizard_to_standby_site(release_group, system_settings, user_settings):
+	"""
+	Fetch the first ready standby site for a Release Group and prefill its setup wizard.
+
+	system_settings: {"country": ..., "time_zone": ..., "language": "en", "currency": ...}
+	user_settings:   {"email": ..., "first_name": ..., "last_name": ..., "full_name": ...}
+	"""
+	frappe.only_for("System Manager")
+
+	system_settings = frappe.parse_json(system_settings) if isinstance(system_settings, str) else system_settings
+	user_settings = frappe.parse_json(user_settings) if isinstance(user_settings, str) else user_settings
+
+	site_info = get_standby_site_for_release_group(release_group)
+	site_name = site_info["name"]
+
+	site = frappe.get_doc("Site", site_name)
+	site.prefill_setup_wizard(system_settings, user_settings)
+	site.db_set("setup_wizard_complete", 1)
+
+	return {"site": site_name, "bench": site_info["bench"]}
