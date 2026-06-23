@@ -112,10 +112,21 @@ def send_setup_wizard_to_standby_site(release_group, system_settings, user_setti
 	site_name = site_info["name"]
 
 	site = frappe.get_doc("Site", site_name)
-	try:
-		site.prefill_setup_wizard(system_settings, user_settings)
-	except requests.exceptions.RequestException as e:
-		frappe.throw(f"Could not connect to site '{site_name}' to run the setup wizard: {e}")
+
+	if not site.setup_wizard_complete:
+		from frappe.frappeclient import FrappeClient
+
+		try:
+			sid = site.get_login_sid()
+			conn = FrappeClient(f"https://{site.name}?sid={sid}")
+			conn.post_api(
+				"frappe.desk.page.setup_wizard.setup_wizard.initialize_system_settings_and_user",
+				{"system_settings_data": system_settings, "user_data": user_settings},
+			)
+			site.db_set("additional_system_user_created", 1)
+		except requests.exceptions.RequestException as e:
+			frappe.throw(f"Could not connect to site '{site_name}' to run the setup wizard: {e}")
+
 	site.db_set("setup_wizard_complete", 1)
 
 	return {"site": site_name, "bench": site_info["bench"]}

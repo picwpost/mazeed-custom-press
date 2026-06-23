@@ -98,8 +98,12 @@ class CustomSaasSite(SaasSite):
 
 
 def apply_overrides():
-	"""Patch Press SaasSite class at runtime for current worker/process."""
+	"""Patch Press SaasSite and Site classes at runtime for current worker/process."""
 	import press.press.doctype.site.saas_site as saas_site_module
+	import press.press.doctype.site.site as site_module
 
 	if saas_site_module.SaasSite is not CustomSaasSite:
 		saas_site_module.SaasSite = CustomSaasSite
+
+	if site_module.Site.prefill_setup_wizard is not CustomSaasSite.prefill_setup_wizard:
+		site_module.Site.prefill_setup_wizard = CustomSaasSite.prefill_setup_wizard
