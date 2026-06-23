@@ -41,6 +41,27 @@ class CustomSaasSite(SaasSite):
 		except Exception:
 			log_error("Removing Old Site from Route53 Failed")
 
+	def prefill_setup_wizard(self, system_settings_payload: dict, user_payload: dict):
+		"""Override Press's prefill_setup_wizard to use sid-based auth.
+
+		The parent uses get_connection_as_admin() which POSTs to /?cmd=login (legacy
+		path). On a standby site whose setup wizard hasn't run yet, Frappe returns an
+		empty body there, causing a JSONDecodeError. get_login_sid() uses the modern
+		/api/method/login path plus an agent-side fallback, which works on new sites.
+		"""
+		if self.setup_wizard_complete or not system_settings_payload or not user_payload:
+			return
+
+		from frappe.frappeclient import FrappeClient
+
+		sid = self.get_login_sid()
+		conn = FrappeClient(f"https://{self.name}?sid={sid}")
+		conn.post_api(
+			"frappe.desk.page.setup_wizard.setup_wizard.initialize_system_settings_and_user",
+			{"system_settings_data": system_settings_payload, "user_data": user_payload},
+		)
+		self.db_set("additional_system_user_created", 1)
+
 	def _normalize_config(self, config) -> dict:
 		"""Accept dict/list/json-string config payloads and normalize to dict."""
 		if not config:

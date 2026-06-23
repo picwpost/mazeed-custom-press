@@ -1,4 +1,5 @@
 import frappe
+import requests
 
 from press.press.doctype.site.saas_pool import get as get_pooled_saas_site
 from press.press.doctype.site.saas_site import get_saas_site_plan
@@ -111,7 +112,10 @@ def send_setup_wizard_to_standby_site(release_group, system_settings, user_setti
 	site_name = site_info["name"]
 
 	site = frappe.get_doc("Site", site_name)
-	site.prefill_setup_wizard(system_settings, user_settings)
+	try:
+		site.prefill_setup_wizard(system_settings, user_settings)
+	except requests.exceptions.RequestException as e:
+		frappe.throw(f"Could not connect to site '{site_name}' to run the setup wizard: {e}")
 	site.db_set("setup_wizard_complete", 1)
 
 	return {"site": site_name, "bench": site_info["bench"]}
