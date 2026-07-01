@@ -19,7 +19,7 @@ class CustomSaasSite(SaasSite):
 	def rename_pooled_site(self, account_request=None, subdomain=None, config=None):
 		"""Rename a pooled site and carry any config payload into the rename job."""
 		if self.app == "erpnext":
-			return self._rename_pooled_site_erpnext(account_request=account_request)
+			return self._rename_pooled_site_erpnext(account_request=account_request, config=config)
 
 		# mazeed_theme (and any future app): original behaviour — Phase 1 + Phase 2
 		self._pending_rename_config = self._normalize_config(config)
@@ -28,7 +28,7 @@ class CustomSaasSite(SaasSite):
 		finally:
 			self._pending_rename_config = None
 
-	def _rename_pooled_site_erpnext(self, account_request=None):
+	def _rename_pooled_site_erpnext(self, account_request=None, config=None):
 		"""Phase 1 only: update site metadata but keep the standby subdomain unchanged.
 		No subdomain change → Site lifecycle does not trigger rename() or the agent job."""
 		self.is_standby = False
@@ -43,6 +43,8 @@ class CustomSaasSite(SaasSite):
 					subscription_config = json.loads(row.value)
 		subscription_config["trial_end_date"] = self.trial_end_date.strftime("%Y-%m-%d")
 		self._update_configuration({"subscription": subscription_config}, save=False)
+		if config:
+			self._update_configuration(self._normalize_config(config), save=False)
 		self.save(ignore_permissions=True)
 		self.create_subscription(plan)
 		self.reload()
