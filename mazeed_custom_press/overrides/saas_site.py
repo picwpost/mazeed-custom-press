@@ -48,6 +48,7 @@ class CustomSaasSite(SaasSite):
 		self.save(ignore_permissions=True)
 		self.create_subscription(plan)
 		self.reload()
+		Agent(self.server).update_site_config(self)
 		return self
 
 	def rename(self, new_name: str):
