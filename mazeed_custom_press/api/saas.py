@@ -1,3 +1,5 @@
+import json
+
 import frappe
 import requests
 
@@ -96,37 +98,87 @@ def get_standby_site_for_release_group(release_group):
 
 
 @frappe.whitelist()
-def send_setup_wizard_to_standby_site(release_group, system_settings, user_settings):
+def send_setup_wizard_to_standby_site(release_group, args, config=None):
 	"""
-	Fetch the first ready standby site for a Release Group and prefill its setup wizard.
+	Fetch the first ready standby site for a Release Group, optionally update its
+	site config, then run its full Setup Wizard.
 
-	system_settings: {"country": ..., "time_zone": ..., "language": "en", "currency": ...}
-	user_settings:   {"email": ..., "first_name": ..., "last_name": ..., "full_name": ...}
+	args: {
+	    "language": "English", "country": "...", "timezone": "...", "currency": "...",
+	    "full_name": "...", "email": "...", "password": "...",
+	    "company_name": "...", "company_abbr": "...", "domain": "...",
+	    "chart_of_accounts": "Standard", "usage_goal": "...",
+	    "fy_start_date": "YYYY-MM-DD", "fy_end_date": "YYYY-MM-DD"
+	}
+	config (optional): site config dict to apply before the wizard runs
 	"""
 	frappe.only_for("System Manager")
 
-	system_settings = frappe.parse_json(system_settings) if isinstance(system_settings, str) else system_settings
-	user_settings = frappe.parse_json(user_settings) if isinstance(user_settings, str) else user_settings
+	args = frappe.parse_json(args) if isinstance(args, str) else args
+	config_payload = frappe.parse_json(config) if isinstance(config, str) else config
 
 	site_info = get_standby_site_for_release_group(release_group)
 	site_name = site_info["name"]
 
+	logger = frappe.logger("mazeed_custom_press.api.saas", with_more_info=True)
+
 	site = frappe.get_doc("Site", site_name)
 
-	if not site.setup_wizard_complete:
-		from frappe.frappeclient import FrappeClient
+	config_update_result = None
+	if config_payload:
+		from press.agent import Agent
 
+		logger.info(f"[send_setup_wizard] updating config for {site_name}: {frappe.as_json(config_payload)}")
+		try:
+			# Merge into Press DB (preserves existing keys, does not replace)
+			config_dict = {
+				item["key"]: item["value"]
+				for item in config_payload
+				if isinstance(item, dict) and item.get("key") and item.get("value") is not None
+			}
+			site._update_configuration(config_dict)
+			# After save(), site.config is refreshed by validate_site_config() in memory
+			logger.info(f"[send_setup_wizard] Press DB updated, site.config={site.config}")
+
+			# Push synchronously — create_agent_job only queues a DB record (Undelivered);
+			# the scheduler delivers it later, which is too late for the wizard to see the config.
+			agent = Agent(site.server)
+			config_update_result = agent.post(
+				f"benches/{site.bench}/sites/{site.name}/config",
+				data={
+					"config": json.loads(site.config),
+					"remove": json.loads(site._keys_removed_in_last_update or "[]"),
+				},
+			)
+			logger.info(f"[send_setup_wizard] agent push result for {site_name}: {config_update_result}")
+		except Exception as e:
+			logger.error(f"[send_setup_wizard] config update failed for {site_name}: {e}")
+			frappe.throw(f"Site config update failed for '{site_name}': {e}")
+
+	if not site.setup_wizard_complete:
+		logger.info(f"[send_setup_wizard] getting login sid for {site_name}")
 		try:
 			sid = site.get_login_sid()
-			conn = FrappeClient(f"https://{site.name}?sid={sid}")
-			conn.post_api(
-				"frappe.desk.page.setup_wizard.setup_wizard.initialize_system_settings_and_user",
-				{"system_settings_data": system_settings, "user_data": user_settings},
+			logger.info(f"[send_setup_wizard] got sid for {site_name}, calling setup_complete")
+			response = requests.post(
+				f"https://{site_name}/api/method/frappe.desk.page.setup_wizard.setup_wizard.setup_complete",
+				data={"args": frappe.as_json(args)},
+				cookies={"sid": sid},
+				timeout=120,
 			)
-			site.db_set("additional_system_user_created", 1)
+			response.raise_for_status()
+			result = response.json()
+			logger.info(f"[send_setup_wizard] setup_complete response for {site_name}: {result}")
+			if result.get("message", {}).get("status") not in ("ok", "registered"):
+				frappe.throw(f"Setup wizard failed for '{site_name}': {result}")
 		except requests.exceptions.RequestException as e:
+			logger.error(f"[send_setup_wizard] HTTP error for {site_name}: {e}")
 			frappe.throw(f"Could not connect to site '{site_name}' to run the setup wizard: {e}")
 
 	site.db_set("setup_wizard_complete", 1)
 
-	return {"site": site_name, "bench": site_info["bench"]}
+	return {
+		"site": site_name,
+		"bench": site_info["bench"],
+		"config_update": config_update_result,
+	}
