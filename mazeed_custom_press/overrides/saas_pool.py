@@ -1,4 +1,5 @@
 import frappe
+from frappe.model.naming import make_autoname
 
 from press.press.doctype.site.saas_site import (
 	create_app_subscriptions,
@@ -84,9 +85,37 @@ def custom_create_one(self, pool_name: str = ""):
 		raise
 
 
+def custom_get_subdomain(self):
+	"""Override for press.press.doctype.site.saas_pool.SaasSitePool.get_subdomain."""
+	return make_autoname("workspace-.########")
+
+
+def custom_get(self, hybrid_saas_pool):
+	"""Override for press.press.doctype.site.saas_pool.SaasSitePool.get."""
+	filters = {
+		"is_standby": True,
+		"standby_for": self.app,
+		"status": "Active",
+		"name": ("like", "workspace%"),
+	}
+
+	if hybrid_saas_pool:
+		filters.update({"hybrid_saas_pool": hybrid_saas_pool})
+	else:
+		filters.update({"hybrid_saas_pool": ("is", "not set")})
+
+	sites = frappe.get_all("Site", filters, pluck="name", order_by="creation", limit=1)
+
+	return sites[0] if sites else sites
+
+
 def apply_overrides():
 	"""Patch Press methods at runtime for current worker/process."""
 	from press.press.doctype.site.saas_pool import SaasSitePool
 
 	if SaasSitePool.create_one is not custom_create_one:
 		SaasSitePool.create_one = custom_create_one
+	if SaasSitePool.get_subdomain is not custom_get_subdomain:
+		SaasSitePool.get_subdomain = custom_get_subdomain
+	if SaasSitePool.get is not custom_get:
+		SaasSitePool.get = custom_get
