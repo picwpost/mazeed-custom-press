@@ -18,10 +18,10 @@ class CustomSaasSite(SaasSite):
 
 	def rename_pooled_site(self, account_request=None, subdomain=None, config=None):
 		"""Rename a pooled site and carry any config payload into the rename job."""
-		if self.app == "erpnext":
+		if self.app in ("erpnext", "mazeed_theme"):
 			return self._rename_pooled_site_erpnext(account_request=account_request, config=config)
 
-		# mazeed_theme (and any future app): original behaviour — Phase 1 + Phase 2
+		# any future app: original behaviour — Phase 1 + Phase 2
 		self._pending_rename_config = self._normalize_config(config)
 		try:
 			return super().rename_pooled_site(account_request=account_request, subdomain=subdomain)
