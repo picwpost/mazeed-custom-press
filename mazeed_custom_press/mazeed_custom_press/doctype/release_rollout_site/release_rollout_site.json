@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "rollout",
+  "site",
+  "source_bench",
+  "status",
+  "site_update",
+  "priority",
+  "is_canary",
+  "last_error",
+  "started_at",
+  "finished_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "rollout",
+   "fieldtype": "Link",
+   "label": "Release Rollout",
+   "options": "Release Rollout",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "site",
+   "fieldtype": "Link",
+   "label": "Site",
+   "options": "Site",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "source_bench",
+   "fieldtype": "Link",
+   "label": "Source Bench",
+   "options": "Bench",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Pending\nStarting\nRunning\nSuccess\nRecovered\nFatal\nSkipped\nCancelled",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "site_update",
+   "fieldtype": "Link",
+   "label": "Site Update",
+   "options": "Site Update",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "priority",
+   "fieldtype": "Int",
+   "label": "Priority"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_canary",
+   "fieldtype": "Check",
+   "label": "Is Canary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mazeed Custom Press",
+ "name": "Release Rollout Site",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Press User"
+  },
+  {
+   "read": 1,
+   "role": "Press Support Agent"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "ASC"
+}

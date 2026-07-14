@@ -1,0 +1,198 @@
+{
+ "actions": [],
+ "autoname": "format:ROLLOUT-{YYYY}-{#####}",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "release_group",
+  "status",
+  "stage",
+  "max_concurrent_updates",
+  "canary_size",
+  "canary_status",
+  "canary_started_at",
+  "canary_finished_at",
+  "total_sites",
+  "pending_sites",
+  "starting_sites",
+  "running_sites",
+  "success_sites",
+  "recovered_sites",
+  "failed_sites",
+  "skipped_sites",
+  "cancelled_sites",
+  "started_at",
+  "finished_at",
+  "started_by",
+  "last_reconciled_at",
+  "dashboard_html"
+ ],
+ "fields": [
+  {
+   "fieldname": "release_group",
+   "fieldtype": "Link",
+   "label": "Release Group",
+   "options": "Release Group",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nRunning\nPaused\nCompleted\nCompleted With Failures\nCancelled",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "default": "Canary",
+   "fieldname": "stage",
+   "fieldtype": "Select",
+   "label": "Stage",
+   "options": "Canary\nMain\nFinished",
+   "reqd": 1
+  },
+  {
+   "default": "2",
+   "fieldname": "max_concurrent_updates",
+   "fieldtype": "Int",
+   "label": "Max Concurrent Updates",
+   "reqd": 1
+  },
+  {
+   "default": "2",
+   "fieldname": "canary_size",
+   "fieldtype": "Int",
+   "label": "Canary Size",
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "canary_status",
+   "fieldtype": "Select",
+   "label": "Canary Status",
+   "options": "Pending\nRunning\nPassed\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "canary_started_at",
+   "fieldtype": "Datetime",
+   "label": "Canary Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "canary_finished_at",
+   "fieldtype": "Datetime",
+   "label": "Canary Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_sites",
+   "fieldtype": "Int",
+   "label": "Total Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pending_sites",
+   "fieldtype": "Int",
+   "label": "Pending Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "starting_sites",
+   "fieldtype": "Int",
+   "label": "Starting Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "running_sites",
+   "fieldtype": "Int",
+   "label": "Running Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "success_sites",
+   "fieldtype": "Int",
+   "label": "Success Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recovered_sites",
+   "fieldtype": "Int",
+   "label": "Recovered Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "failed_sites",
+   "fieldtype": "Int",
+   "label": "Failed Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "skipped_sites",
+   "fieldtype": "Int",
+   "label": "Skipped Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancelled_sites",
+   "fieldtype": "Int",
+   "label": "Cancelled Sites",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_by",
+   "fieldtype": "Link",
+   "label": "Started By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_reconciled_at",
+   "fieldtype": "Datetime",
+   "label": "Last Reconciled At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dashboard_html",
+   "fieldtype": "HTML",
+   "label": "Operations Dashboard"
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mazeed Custom Press",
+ "name": "Release Rollout",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Press User"
+  },
+  {
+   "read": 1,
+   "role": "Press Support Agent"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
