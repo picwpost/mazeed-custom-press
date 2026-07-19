@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["press"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -85,7 +85,8 @@ doctype_js = {
 # ------------
 
 # before_install = "mazeed_custom_press.install.before_install"
-# after_install = "mazeed_custom_press.install.after_install"
+after_install = "mazeed_custom_press.install.after_install"
+after_migrate = "mazeed_custom_press.install.after_migrate"
 
 # Uninstallation
 # ------------
@@ -139,18 +140,22 @@ doctype_js = {
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Site Update": {
+		"before_insert": "mazeed_custom_press.release_rollout.attach_rollout_site",
+	},
+	"Agent Job": {
+		"on_change": "mazeed_custom_press.release_rollout.observe_agent_job",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
+scheduler_events = {
+	"cron": {
+		"*/2 * * * *": ["mazeed_custom_press.release_rollout.reconcile_running_rollouts"],
+	},
 # 	"all": [
 # 		"mazeed_custom_press.tasks.all"
 # 	],
@@ -166,7 +171,7 @@ doctype_js = {
 # 	"monthly": [
 # 		"mazeed_custom_press.tasks.monthly"
 # 	],
-# }
+}
 
 # Testing
 # -------
@@ -177,7 +182,8 @@ doctype_js = {
 # ------------------------------
 #
 override_whitelisted_methods = {
-	"press.api.saas.new_saas_site": "mazeed_custom_press.api.saas.new_saas_site"
+	"press.api.saas.new_saas_site": "mazeed_custom_press.api.saas.new_saas_site",
+	"press.api.bench.update_all_sites": "mazeed_custom_press.api.release_rollout.update_all_sites",
 }
 #
 # each overriding function accepts a `data` argument;
