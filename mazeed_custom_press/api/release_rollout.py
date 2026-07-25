@@ -4,13 +4,15 @@ import frappe
 from frappe.utils import cint
 from press.api.site import protected
 
-from mazeed_custom_press.release_rollout import create_release_rollout
+from mazeed_custom_press.release_rollout import create_release_rollout, logger
 
 
 @frappe.whitelist()
 @protected("Release Group")
 def update_all_sites(name):
-	if rollout_queue_enabled():
+	enabled = rollout_queue_enabled()
+	logger.info(f"update_all_sites: release_group={name} user={frappe.session.user} rollout_queue_enabled={enabled}")
+	if enabled:
 		return create_release_rollout(name)
 	return run_legacy_update_all_sites(name)
 
@@ -18,12 +20,16 @@ def update_all_sites(name):
 def rollout_queue_enabled() -> bool:
 	# Code may be deployed before migrate on production. Missing schema must be safely off.
 	if not frappe.get_meta("Press Settings").has_field("enable_release_rollout_queue"):
+		logger.info("rollout_queue_enabled: Press Settings has no 'enable_release_rollout_queue' field yet (migrate pending?) -- treating as off")
 		return False
-	return bool(frappe.utils.cint(frappe.db.get_single_value("Press Settings", "enable_release_rollout_queue")))
+	value = frappe.db.get_single_value("Press Settings", "enable_release_rollout_queue")
+	logger.info(f"rollout_queue_enabled: Press Settings.enable_release_rollout_queue={value!r}")
+	return bool(frappe.utils.cint(value))
 
 
 def run_legacy_update_all_sites(name):
 	benches = frappe.get_all("Bench", {"group": name, "status": "Active"})
+	logger.info(f"run_legacy_update_all_sites: release_group={name} active_benches={[b['name'] for b in benches]}")
 	for bench in benches:
 		frappe.get_cached_doc("Bench", bench).update_all_sites()
 

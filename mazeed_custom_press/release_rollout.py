@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import logging
+
 import frappe
 from frappe import _
 from frappe.utils import add_to_date, cint, now_datetime
 
+logger = frappe.logger("mazeed_rollout", allow_site=True, file_count=20)
+# frappe.logger() defaults to WARNING (dev) / ERROR (production), which would
+# silently drop every .info() call below. This is a dedicated troubleshooting
+# logger, so raise its own level explicitly rather than the bench-wide default.
+logger.setLevel(logging.INFO)
 
 ELIGIBLE_SITE_STATUSES = ("Active", "Inactive", "Suspended")
 TERMINAL_SITE_UPDATE_MAP = {
@@ -19,18 +26,27 @@ STARTING_TIMEOUT_MINUTES = 10
 
 
 def create_release_rollout(release_group: str, max_concurrent_updates=None, canary_size=None):
+	logger.info(f"create_release_rollout: start release_group={release_group}")
+
 	# Serializes the active-rollout check without changing the Press DocType.
 	if not frappe.db.get_value("Release Group", release_group, "name", for_update=True):
+		logger.info(f"create_release_rollout: abort release_group={release_group} reason=does_not_exist")
 		frappe.throw(_("Release Group {0} does not exist").format(release_group))
 
-	if frappe.db.exists(
-		"Release Rollout", {"release_group": release_group, "status": ("in", ("Draft", "Running"))}
-	):
+	existing = frappe.db.get_value(
+		"Release Rollout", {"release_group": release_group, "status": ("in", ("Draft", "Running"))}, "name"
+	)
+	if existing:
+		logger.info(
+			f"create_release_rollout: abort release_group={release_group} "
+			f"reason=active_rollout_exists existing_rollout={existing}"
+		)
 		frappe.throw(_("An active rollout already exists for this Release Group"))
 
 	benches = frappe.get_all(
 		"Bench", filters={"group": release_group, "status": "Active"}, pluck="name", order_by="name"
 	)
+	logger.info(f"create_release_rollout: release_group={release_group} active_benches={benches}")
 	sites = frappe.get_all(
 		"Site",
 		filters={"bench": ("in", benches), "status": ("in", ELIGIBLE_SITE_STATUSES)},
@@ -38,6 +54,7 @@ def create_release_rollout(release_group: str, max_concurrent_updates=None, cana
 		order_by="name",
 	) if benches else []
 	if not sites:
+		logger.info(f"create_release_rollout: abort release_group={release_group} reason=no_eligible_sites")
 		frappe.throw(_("No eligible sites were found for this Release Group"))
 
 	# Defaults come from Press Settings and are captured on the rollout at
@@ -87,6 +104,10 @@ def create_release_rollout(release_group: str, max_concurrent_updates=None, cana
 			"is_canary": index < canaries,
 		}).insert(ignore_permissions=True)
 
+	logger.info(
+		f"create_release_rollout: created rollout={rollout.name} release_group={release_group} "
+		f"sites={len(sites)} canaries={canaries} max_concurrent_updates={limit}"
+	)
 	frappe.enqueue(
 		"mazeed_custom_press.release_rollout.start_next_sites",
 		rollout_name=rollout.name,
@@ -98,12 +119,17 @@ def create_release_rollout(release_group: str, max_concurrent_updates=None, cana
 def start_next_sites(rollout_name: str):
 	rollout = _lock_rollout(rollout_name)
 	if rollout.status != "Running":
+		logger.info(f"start_next_sites: rollout={rollout_name} skipped status={rollout.status}")
 		return
 
 	active = frappe.db.count(
 		"Release Rollout Site", {"rollout": rollout.name, "status": ("in", ("Starting", "Running"))}
 	)
 	available = cint(rollout.max_concurrent_updates) - active
+	logger.info(
+		f"start_next_sites: rollout={rollout_name} stage={rollout.stage} "
+		f"active={active} max_concurrent_updates={rollout.max_concurrent_updates} available_slots={available}"
+	)
 	if available <= 0:
 		return
 
@@ -111,6 +137,7 @@ def start_next_sites(rollout_name: str):
 	rows = frappe.get_all(
 		"Release Rollout Site", filters=filters, pluck="name", order_by="priority desc, creation asc", limit=available
 	)
+	logger.info(f"start_next_sites: rollout={rollout_name} batch_picked={rows}")
 	for row_name in rows:
 		frappe.db.sql(
 			"UPDATE `tabRelease Rollout Site` SET status='Starting', modified=%s "
@@ -140,35 +167,48 @@ def attach_rollout_site(doc, method=None):
 def start_rollout_site(rollout_site_name: str):
 	row = frappe.get_doc("Release Rollout Site", rollout_site_name, for_update=True)
 	if row.status != "Starting":
+		logger.info(f"start_rollout_site: {rollout_site_name} skipped status={row.status}")
 		return
 
 	if frappe.db.get_value("Release Rollout", row.rollout, "status") != "Running":
 		# Paused or cancelled after this row was claimed: release the claim so
 		# the site is picked up again on resume instead of starting now.
+		logger.info(f"start_rollout_site: {rollout_site_name} rollout={row.rollout} not running, releasing claim")
 		row.db_set("status", "Pending")
 		return
 
 	existing = frappe.db.get_value("Site Update", {"release_rollout_site": row.name}, "name")
 	if existing:
+		logger.info(f"start_rollout_site: {rollout_site_name} site_update={existing} already exists, reusing")
 		_mark_running(row, existing)
 		return
 
 	site = frappe.get_doc("Site", row.site)
 	if site.status not in ELIGIBLE_SITE_STATUSES or site.bench != row.source_bench:
+		logger.info(
+			f"start_rollout_site: {rollout_site_name} site={row.site} skipped "
+			f"site_status={site.status} site_bench={site.bench} expected_bench={row.source_bench}"
+		)
 		_skip_row(row, "Site is no longer eligible or has moved to another bench")
 		return
 
 	try:
 		frappe.flags.release_rollout_site = row.name
 		site_update = site.schedule_update()
+		logger.info(f"start_rollout_site: {rollout_site_name} site={row.site} scheduled site_update={site_update}")
 		_mark_running(row, site_update)
 	except Exception as exc:
 		# schedule_update may have inserted successfully before a later local write failed.
 		# Never classify that case as skipped or create a second update on retry.
 		existing = frappe.db.get_value("Site Update", {"release_rollout_site": row.name}, "name")
 		if existing:
+			logger.info(
+				f"start_rollout_site: {rollout_site_name} site_update={existing} "
+				f"created despite error, reusing: {exc}"
+			)
 			_mark_running(row, existing)
 			return
+		logger.info(f"start_rollout_site: {rollout_site_name} site={row.site} failed: {exc}")
 		frappe.log_error(
 			title=f"Release rollout site failed: {row.name}",
 			message=frappe.get_traceback(with_context=True),
@@ -216,6 +256,7 @@ def sync_site_update(site_update_name: str):
 	row = frappe.get_doc("Release Rollout Site", row_name, for_update=True)
 	if row.status in TERMINAL_ROLLOUT_SITE_STATUSES:
 		return
+	logger.info(f"sync_site_update: site_update={site_update_name} row={row_name} status={status} -> {rollout_status}")
 	row.db_set({"status": rollout_status, "finished_at": now_datetime()})
 	_recount_and_advance(row.rollout)
 
@@ -226,12 +267,14 @@ def _recount_and_advance(rollout_name: str):
 	# but only a Running rollout may promote, refill, or finish.
 	_recount(rollout.name)
 	if rollout.status != "Running":
+		logger.info(f"_recount_and_advance: rollout={rollout_name} not running (status={rollout.status}), stop")
 		return
 	if rollout.stage == "Canary":
 		canary_statuses = frappe.get_all(
 			"Release Rollout Site", {"rollout": rollout.name, "is_canary": 1}, pluck="status"
 		)
 		if any(status in FAILED_STATUSES for status in canary_statuses):
+			logger.info(f"_recount_and_advance: rollout={rollout_name} canary FAILED statuses={canary_statuses}")
 			now = now_datetime()
 			frappe.db.set_value("Release Rollout", rollout.name, {
 				"canary_status": "Failed", "canary_finished_at": now,
@@ -245,6 +288,7 @@ def _recount_and_advance(rollout_name: str):
 			_recount(rollout.name)
 			return
 		if canary_statuses and all(status in SUCCESSFUL_STATUSES for status in canary_statuses):
+			logger.info(f"_recount_and_advance: rollout={rollout_name} canary PASSED, advancing stage to Main")
 			frappe.db.set_value("Release Rollout", rollout.name, {
 				"canary_status": "Passed", "canary_finished_at": now_datetime(), "stage": "Main",
 			})
@@ -252,11 +296,13 @@ def _recount_and_advance(rollout_name: str):
 	counts = _status_counts(rollout.name)
 	if not counts.get("Pending") and not counts.get("Starting") and not counts.get("Running"):
 		failed = any(counts.get(status) for status in FAILED_STATUSES)
+		logger.info(f"_recount_and_advance: rollout={rollout_name} FINISHED counts={counts} failed={bool(failed)}")
 		frappe.db.set_value("Release Rollout", rollout.name, {
 			"status": "Completed With Failures" if failed else "Completed",
 			"stage": "Finished", "finished_at": rollout.finished_at or now_datetime(),
 		})
 		return
+	logger.info(f"_recount_and_advance: rollout={rollout_name} counts={counts}, requesting next batch")
 	frappe.enqueue(
 		"mazeed_custom_press.release_rollout.start_next_sites",
 		rollout_name=rollout.name,
@@ -281,6 +327,7 @@ def cancel_rollout(rollout_name: str):
 		"status": "Cancelled", "stage": "Finished", "finished_at": rollout.finished_at or now,
 	})
 	_recount(rollout.name)
+	logger.info(f"cancel_rollout: rollout={rollout_name} cancelled by user={frappe.session.user}")
 
 
 def pause_rollout(rollout_name: str):
@@ -288,6 +335,7 @@ def pause_rollout(rollout_name: str):
 	if rollout.status != "Running":
 		frappe.throw(_("Only a running rollout can be paused"))
 	frappe.db.set_value("Release Rollout", rollout.name, "status", "Paused")
+	logger.info(f"pause_rollout: rollout={rollout_name} paused by user={frappe.session.user}")
 
 
 def resume_rollout(rollout_name: str):
@@ -295,13 +343,17 @@ def resume_rollout(rollout_name: str):
 	if rollout.status != "Paused":
 		frappe.throw(_("Only a paused rollout can be resumed"))
 	frappe.db.set_value("Release Rollout", rollout.name, "status", "Running")
+	logger.info(f"resume_rollout: rollout={rollout_name} resumed by user={frappe.session.user}")
 	# Reuses the normal advance path: recount, evaluate the canary gate,
 	# finish if everything drained while paused, otherwise refill capacity.
 	_recount_and_advance(rollout.name)
 
 
 def reconcile_running_rollouts():
-	for rollout_name in frappe.get_all("Release Rollout", {"status": "Running"}, pluck="name"):
+	running = frappe.get_all("Release Rollout", {"status": "Running"}, pluck="name")
+	if running:
+		logger.info(f"reconcile_running_rollouts: tick running_rollouts={running}")
+	for rollout_name in running:
 		for update in frappe.get_all(
 			"Release Rollout Site", {"rollout": rollout_name, "status": "Running", "site_update": ("is", "set")},
 			pluck="site_update",
@@ -315,9 +367,11 @@ def reconcile_running_rollouts():
 		):
 			update = frappe.db.get_value("Site Update", {"release_rollout_site": row_name}, "name")
 			if update:
+				logger.info(f"reconcile_running_rollouts: {row_name} stuck in Starting, found site_update={update}")
 				frappe.db.set_value("Release Rollout Site", row_name, {"site_update": update, "status": "Running"})
 				sync_site_update(update)
 			else:
+				logger.info(f"reconcile_running_rollouts: {row_name} stuck in Starting with no site_update, releasing to Pending")
 				frappe.db.set_value("Release Rollout Site", row_name, "status", "Pending")
 		frappe.db.set_value("Release Rollout", rollout_name, "last_reconciled_at", now_datetime())
 		_recount_and_advance(rollout_name)
