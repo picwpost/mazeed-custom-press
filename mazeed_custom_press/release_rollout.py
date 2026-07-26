@@ -25,8 +25,8 @@ FAILED_STATUSES = ("Fatal", "Skipped", "Cancelled")
 STARTING_TIMEOUT_MINUTES = 10
 
 
-def create_release_rollout(release_group: str, max_concurrent_updates=None, canary_size=None):
-	logger.info(f"create_release_rollout: start release_group={release_group}")
+def create_release_rollout(release_group: str, source_bench: str | None = None, max_concurrent_updates=None, canary_size=None):
+	logger.info(f"create_release_rollout: start release_group={release_group} source_bench={source_bench}")
 
 	# Serializes the active-rollout check without changing the Press DocType.
 	if not frappe.db.get_value("Release Group", release_group, "name", for_update=True):
@@ -43,10 +43,22 @@ def create_release_rollout(release_group: str, max_concurrent_updates=None, cana
 		)
 		frappe.throw(_("An active rollout already exists for this Release Group"))
 
-	benches = frappe.get_all(
-		"Bench", filters={"group": release_group, "status": "Active"}, pluck="name", order_by="name"
-	)
-	logger.info(f"create_release_rollout: release_group={release_group} active_benches={benches}")
+	if source_bench:
+		# Scoped to the one bench the operator clicked -- this is what "Update
+		# All Sites" has always meant (moving THIS bench's sites onward), not
+		# every active bench in the release group. Pulling in unrelated
+		# benches silently touched sites nobody asked to move (DASH-14).
+		if frappe.db.get_value("Bench", source_bench, "group") != release_group:
+			frappe.throw(_("Bench {0} does not belong to Release Group {1}").format(source_bench, release_group))
+		benches = [source_bench]
+	else:
+		# No specific bench given: only reachable via the release-group-level
+		# whitelisted endpoint (press.api.bench.update_all_sites called
+		# directly by name), which has always covered every active bench.
+		benches = frappe.get_all(
+			"Bench", filters={"group": release_group, "status": "Active"}, pluck="name", order_by="name"
+		)
+	logger.info(f"create_release_rollout: release_group={release_group} benches={benches}")
 	sites = frappe.get_all(
 		"Site",
 		filters={"bench": ("in", benches), "status": ("in", ELIGIBLE_SITE_STATUSES)},

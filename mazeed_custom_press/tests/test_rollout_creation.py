@@ -70,6 +70,22 @@ class TestRolloutCreation(FrappeTestCase):
 		rows = frappe.get_all("Release Rollout Site", {"rollout": result["rollout"]}, pluck="site")
 		self.assertEqual(rows, [selected_site])
 
+	def test_snap_01b_source_bench_scopes_selection_to_that_bench_only(self):
+		# "Update All Sites" clicked on one bench must not sweep in sites from
+		# other active benches in the same Release Group (DASH-14): only the
+		# clicked bench's own sites belong in the rollout.
+		group = fabricate_release_group()
+		clicked_bench = fabricate_bench(group, status="Active")
+		other_active_bench = fabricate_bench(group, status="Active")
+		selected_site = fabricate_site(clicked_bench)
+		fabricate_site(other_active_bench)
+
+		result = create_release_rollout(group, source_bench=clicked_bench)
+
+		self.assertEqual(result["selected_sites"], 1)
+		rows = frappe.get_all("Release Rollout Site", {"rollout": result["rollout"]}, pluck="site")
+		self.assertEqual(rows, [selected_site])
+
 	def test_snap_02_and_03_only_active_inactive_and_suspended_sites_are_selected(self):
 		group, bench, _ = make_group_with_sites(
 			("Active", "Inactive", "Suspended", "Archived", "Broken", "Pending")

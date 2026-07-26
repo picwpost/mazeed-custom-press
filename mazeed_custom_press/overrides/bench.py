@@ -26,7 +26,7 @@ def custom_update_all_sites(self):
 	logger.info(f"bench.update_all_sites override invoked bench={self.name} group={self.group}")
 	from mazeed_custom_press.api.release_rollout import update_all_sites
 
-	update_all_sites(name=self.group)
+	update_all_sites(name=self.group, source_bench=self.name)
 
 
 def apply_overrides():

@@ -42,7 +42,7 @@ class TestFlagAndRouter(FrappeTestCase):
 			patch.object(router, "create_release_rollout") as create,
 		):
 			router.update_all_sites(name="some-group")
-		legacy.assert_called_once_with("some-group")
+		legacy.assert_called_once_with("some-group", source_bench=None)
 		create.assert_not_called()
 		self.assertFalse(frappe.db.exists("Release Rollout", {"release_group": "some-group"}))
 
@@ -60,7 +60,7 @@ class TestFlagAndRouter(FrappeTestCase):
 			patch.object(router, "create_release_rollout", return_value=response) as create,
 		):
 			result = router.update_all_sites(name="some-group")
-		create.assert_called_once_with("some-group")
+		create.assert_called_once_with("some-group", source_bench=None)
 		legacy.assert_not_called()
 		self.assertEqual(result, response)
 
