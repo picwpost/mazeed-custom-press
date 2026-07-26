@@ -9,12 +9,15 @@ from mazeed_custom_press.release_rollout import create_release_rollout, logger
 
 @frappe.whitelist()
 @protected("Release Group")
-def update_all_sites(name):
+def update_all_sites(name, source_bench=None):
 	enabled = rollout_queue_enabled()
-	logger.info(f"update_all_sites: release_group={name} user={frappe.session.user} rollout_queue_enabled={enabled}")
+	logger.info(
+		f"update_all_sites: release_group={name} source_bench={source_bench} "
+		f"user={frappe.session.user} rollout_queue_enabled={enabled}"
+	)
 	if enabled:
-		return create_release_rollout(name)
-	return run_legacy_update_all_sites(name)
+		return create_release_rollout(name, source_bench=source_bench)
+	return run_legacy_update_all_sites(name, source_bench=source_bench)
 
 
 def rollout_queue_enabled() -> bool:
@@ -27,11 +30,16 @@ def rollout_queue_enabled() -> bool:
 	return bool(frappe.utils.cint(value))
 
 
-def run_legacy_update_all_sites(name):
+def run_legacy_update_all_sites(name, source_bench=None):
 	from mazeed_custom_press.overrides.bench import call_original_update_all_sites
 
-	benches = frappe.get_all("Bench", {"group": name, "status": "Active"})
-	logger.info(f"run_legacy_update_all_sites: release_group={name} active_benches={[b['name'] for b in benches]}")
+	if source_bench:
+		# Scoped to the one bench clicked -- matches Press's original,
+		# always-bench-scoped Bench.update_all_sites behavior.
+		benches = [{"name": source_bench}]
+	else:
+		benches = frappe.get_all("Bench", {"group": name, "status": "Active"})
+	logger.info(f"run_legacy_update_all_sites: release_group={name} benches={[b['name'] for b in benches]}")
 	for bench in benches:
 		call_original_update_all_sites(frappe.get_cached_doc("Bench", bench["name"]))
 
