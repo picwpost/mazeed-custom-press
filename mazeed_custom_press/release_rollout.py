@@ -4,6 +4,7 @@ import logging
 
 import frappe
 from frappe import _
+from frappe.model.document import bulk_insert
 from frappe.utils import add_to_date, cint, now_datetime
 
 logger = frappe.logger("mazeed_rollout", allow_site=True, file_count=20)
@@ -25,7 +26,13 @@ FAILED_STATUSES = ("Fatal", "Skipped", "Cancelled")
 STARTING_TIMEOUT_MINUTES = 10
 
 
-def create_release_rollout(release_group: str, source_bench: str | None = None, max_concurrent_updates=None, canary_size=None):
+def create_release_rollout(
+	release_group: str,
+	source_bench: str | None = None,
+	max_concurrent_updates=None,
+	canary_size=None,
+	skip_backups_for_main_stage=None,
+):
 	logger.info(f"create_release_rollout: start release_group={release_group} source_bench={source_bench}")
 
 	# Serializes the active-rollout check without changing the Press DocType.
@@ -88,6 +95,10 @@ def create_release_rollout(release_group: str, source_bench: str | None = None, 
 		frappe.throw(_("Max concurrent updates must be greater than zero"))
 	if canaries < 0 or canaries > len(sites):
 		frappe.throw(_("Canary size must be between 0 and {0}").format(len(sites)))
+	if skip_backups_for_main_stage is None:
+		skip_backups = bool(cint(frappe.db.get_single_value("Press Settings", "rollout_skip_backups_for_main_stage")))
+	else:
+		skip_backups = bool(skip_backups_for_main_stage)
 
 	now = now_datetime()
 	rollout = frappe.get_doc({
@@ -97,6 +108,7 @@ def create_release_rollout(release_group: str, source_bench: str | None = None, 
 		"stage": "Canary" if canaries else "Main",
 		"max_concurrent_updates": limit,
 		"canary_size": canaries,
+		"skip_backups_for_main_stage": skip_backups,
 		"canary_status": "Pending" if canaries else "Passed",
 		"canary_finished_at": None if canaries else now,
 		"total_sites": len(sites),
@@ -105,8 +117,15 @@ def create_release_rollout(release_group: str, source_bench: str | None = None, 
 		"started_by": frappe.session.user,
 	}).insert(ignore_permissions=True)
 
+	# One insert() per site holds the Release Group's row lock for the whole
+	# loop -- at 30k sites that's 30k round trips before the lock is ever
+	# released. bulk_insert() builds the same rows as a handful of multi-row
+	# INSERT statements instead; the doctype has no custom validate/hooks
+	# (plain Document subclass), so skipping the per-row Document lifecycle
+	# changes nothing here.
+	rollout_site_docs = []
 	for index, site in enumerate(sites):
-		frappe.get_doc({
+		doc = frappe.get_doc({
 			"doctype": "Release Rollout Site",
 			"rollout": rollout.name,
 			"site": site.name,
@@ -114,15 +133,19 @@ def create_release_rollout(release_group: str, source_bench: str | None = None, 
 			"status": "Pending",
 			"priority": 0,
 			"is_canary": index < canaries,
-		}).insert(ignore_permissions=True)
+		})
+		doc.name = frappe.generate_hash(length=10)
+		rollout_site_docs.append(doc)
+	bulk_insert("Release Rollout Site", rollout_site_docs)
 
 	logger.info(
 		f"create_release_rollout: created rollout={rollout.name} release_group={release_group} "
-		f"sites={len(sites)} canaries={canaries} max_concurrent_updates={limit}"
+		f"sites={len(sites)} canaries={canaries} max_concurrent_updates={limit} skip_backups_for_main_stage={skip_backups}"
 	)
 	frappe.enqueue(
 		"mazeed_custom_press.release_rollout.start_next_sites",
 		rollout_name=rollout.name,
+		queue="short",
 		enqueue_after_commit=True,
 	)
 	return {"rollout": rollout.name, "selected_sites": len(sites)}
@@ -161,6 +184,7 @@ def start_next_sites(rollout_name: str):
 		frappe.enqueue(
 			"mazeed_custom_press.release_rollout.start_rollout_site",
 			rollout_site_name=row_name,
+			queue="short",
 			enqueue_after_commit=True,
 		)
 	if rows and rollout.stage == "Canary" and rollout.canary_status == "Pending":
@@ -204,10 +228,22 @@ def start_rollout_site(rollout_site_name: str):
 		_skip_row(row, "Site is no longer eligible or has moved to another bench")
 		return
 
+	# Canary sites always keep their backup, regardless of the setting -- they
+	# are the ones proving the update is safe in the first place. Skipping
+	# only applies once a site is past that gate. This is the one-off backup
+	# taken immediately before this specific update; the regular scheduled
+	# site backup system is entirely separate and is never affected.
+	skip_backups = (
+		not row.is_canary
+		and bool(frappe.db.get_value("Release Rollout", row.rollout, "skip_backups_for_main_stage"))
+	)
 	try:
 		frappe.flags.release_rollout_site = row.name
-		site_update = site.schedule_update()
-		logger.info(f"start_rollout_site: {rollout_site_name} site={row.site} scheduled site_update={site_update}")
+		site_update = site.schedule_update(skip_backups=skip_backups)
+		logger.info(
+			f"start_rollout_site: {rollout_site_name} site={row.site} scheduled "
+			f"site_update={site_update} skip_backups={skip_backups}"
+		)
 		_mark_running(row, site_update)
 	except Exception as exc:
 		# schedule_update may have inserted successfully before a later local write failed.
@@ -253,6 +289,7 @@ def observe_agent_job(doc, method=None):
 			frappe.enqueue(
 				"mazeed_custom_press.release_rollout.sync_site_update",
 				site_update_name=update,
+				queue="short",
 				enqueue_after_commit=True,
 			)
 
@@ -277,7 +314,7 @@ def _recount_and_advance(rollout_name: str):
 	rollout = _lock_rollout(rollout_name)
 	# Late completions on paused/cancelled rollouts must still update counters,
 	# but only a Running rollout may promote, refill, or finish.
-	_recount(rollout.name)
+	counts = _recount(rollout.name)
 	if rollout.status != "Running":
 		logger.info(f"_recount_and_advance: rollout={rollout_name} not running (status={rollout.status}), stop")
 		return
@@ -297,6 +334,8 @@ def _recount_and_advance(rollout_name: str):
 				"last_error=%s, finished_at=%s WHERE rollout=%s AND is_canary=0 AND status='Pending'",
 				("Not started because the canary gate failed", now, rollout.name),
 			)
+			# The bulk UPDATE above changed site rows out from under the counts
+			# computed above, so this specific recount cannot reuse them.
 			_recount(rollout.name)
 			return
 		if canary_statuses and all(status in SUCCESSFUL_STATUSES for status in canary_statuses):
@@ -304,8 +343,10 @@ def _recount_and_advance(rollout_name: str):
 			frappe.db.set_value("Release Rollout", rollout.name, {
 				"canary_status": "Passed", "canary_finished_at": now_datetime(), "stage": "Main",
 			})
+			# Only the rollout's own canary_status/stage changed above -- no
+			# site row did, so `counts` from the top of this call is still
+			# accurate and does not need to be re-queried.
 
-	counts = _status_counts(rollout.name)
 	if not counts.get("Pending") and not counts.get("Starting") and not counts.get("Running"):
 		failed = any(counts.get(status) for status in FAILED_STATUSES)
 		logger.info(f"_recount_and_advance: rollout={rollout_name} FINISHED counts={counts} failed={bool(failed)}")
@@ -318,6 +359,7 @@ def _recount_and_advance(rollout_name: str):
 	frappe.enqueue(
 		"mazeed_custom_press.release_rollout.start_next_sites",
 		rollout_name=rollout.name,
+		queue="short",
 		enqueue_after_commit=True,
 	)
 
@@ -402,7 +444,14 @@ def _status_counts(rollout_name: str) -> dict[str, int]:
 	return {row.status: cint(row.count) for row in rows}
 
 
-def _recount(rollout_name: str):
+def _recount(rollout_name: str) -> dict[str, int]:
+	"""Persist the display counters and return the counts computed.
+
+	Callers that also need the counts for a decision (canary gate, completion
+	check) should use this return value instead of calling _status_counts()
+	again -- at large site counts that second aggregate query is pure waste,
+	since nothing changes the site rows between the two calls.
+	"""
 	counts = _status_counts(rollout_name)
 	frappe.db.set_value("Release Rollout", rollout_name, {
 		"pending_sites": counts.get("Pending", 0),
@@ -414,3 +463,4 @@ def _recount(rollout_name: str):
 		"skipped_sites": counts.get("Skipped", 0),
 		"cancelled_sites": counts.get("Cancelled", 0),
 	}, update_modified=False)
+	return counts

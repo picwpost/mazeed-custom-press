@@ -206,6 +206,24 @@ class TestCanaryGate(FrappeTestCase):
 		rollout.reload()
 		self.assertEqual(rollout.canary_status, "Passed")
 
+	def test_recount_and_advance_computes_status_counts_only_once_per_call(self):
+		# At large site counts (e.g. 30k), a second identical aggregate query
+		# per completion event is pure waste. This pins the dedup so it
+		# cannot silently regress back to two queries per call.
+		from mazeed_custom_press import release_rollout
+
+		rollout = make_canary_rollout(total_sites=5, canary_size=2, limit=3)
+		start_next_sites(rollout.name)
+		finish_rows(rows_by_stage(rollout.name, 1), "Success")  # canary passes -> promotion path
+
+		with patch(
+			"mazeed_custom_press.release_rollout._status_counts",
+			wraps=release_rollout._status_counts,
+		) as status_counts_spy:
+			_recount_and_advance(rollout.name)
+
+		self.assertEqual(status_counts_spy.call_count, 1)
+
 	def test_canary_09_canary_size_zero_starts_the_main_stage_directly(self):
 		group = fabricate_release_group()
 		bench = fabricate_bench(group)

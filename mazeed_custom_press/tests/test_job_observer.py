@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from mazeed_custom_press.release_rollout import start_rollout_site, sync_site_update
+from mazeed_custom_press.release_rollout import start_next_sites, start_rollout_site, sync_site_update
 from mazeed_custom_press.tests.rollout_test_utils import (
 	create_updateable_site_environment,
 	fabricate_site_update,
@@ -138,3 +138,89 @@ class TestSiteUpdateSynchronization(FrappeTestCase):
 		sync_site_update(row.site_update)
 		row.reload()
 		self.assertEqual(row.status, "Success")
+
+	def test_event_09_update_status_override_syncs_immediately_without_relying_on_the_dead_hook(self):
+		# The Agent Job on_change hook above only fires because the test
+		# manually calls run_method("on_change") -- real Press never does
+		# that; it writes status via a raw db.set_value (see
+		# press.press.doctype.site_update.site_update.update_status), which
+		# never fires on_change at all. This is what actually detects
+		# completion in production: patching that module-level function.
+		from press.press.doctype.site_update import site_update as site_update_module
+
+		from mazeed_custom_press.overrides.site_update import apply_overrides
+
+		# apply_overrides() mutates this module-level function for the whole
+		# process, not just this test -- without restoring it, every later
+		# test in the same `bench run-tests` run (including the Slice 0
+		# characterization tests, which assume vanilla Press behavior) would
+		# silently run against our patched version instead.
+		original_update_status = site_update_module.update_status
+		self.addCleanup(setattr, site_update_module, "update_status", original_update_status)
+
+		apply_overrides()
+		environment, rollout, row = make_running_row()
+
+		with patch("mazeed_custom_press.overrides.site_update.frappe.enqueue") as enqueue:
+			site_update_module.update_status(row.site_update, "Success")
+
+		self.assertEqual(frappe.db.get_value("Site Update", row.site_update, "status"), "Success")
+		sync_calls = [
+			called
+			for called in enqueue.call_args_list
+			if called.args and called.args[0].endswith("sync_site_update")
+		]
+		self.assertEqual(len(sync_calls), 1)
+		self.assertEqual(sync_calls[0].kwargs.get("site_update_name"), row.site_update)
+		self.assertEqual(sync_calls[0].kwargs.get("queue"), "short")
+		self.assertTrue(sync_calls[0].kwargs.get("enqueue_after_commit"))
+
+	def test_event_10_a_single_completion_refills_exactly_one_slot_keeping_concurrency_constant(self):
+		# With 3 running and 2 pending, one running site finishing must start
+		# exactly 1 new site (not 0, not both pending ones), leave the other 2
+		# running sites untouched, and keep total active at the concurrency
+		# cap of 3 -- rolling one-at-a-time refill, never "wait for the batch".
+		from press.press.doctype.agent_job.agent_job import AgentJob
+		from press.press.doctype.site.test_site import create_test_site
+
+		environment = create_updateable_site_environment()
+		rollout = make_rollout(environment.group.name, max_concurrent_updates=3, total_sites=5)
+
+		sites = [environment.site.name] + [
+			create_test_site(bench=environment.bench1.name).name for _ in range(4)
+		]
+
+		running_rows = []
+		with patch.object(AgentJob, "enqueue_http_request", new=Mock()):
+			for site in sites[:3]:
+				row = make_rollout_site(rollout.name, site, environment.bench1.name, status="Starting")
+				start_rollout_site(row.name)
+				row.reload()
+				self.assertEqual(row.status, "Running")
+				running_rows.append(row)
+
+		pending_rows = [
+			make_rollout_site(rollout.name, site, environment.bench1.name) for site in sites[3:]
+		]
+
+		frappe.db.set_value("Site Update", running_rows[0].site_update, "status", "Success")
+		with patch("mazeed_custom_press.release_rollout.frappe.enqueue"):
+			sync_site_update(running_rows[0].site_update)
+		start_next_sites(rollout.name)
+
+		for row in running_rows[1:] + pending_rows:
+			row.reload()
+		running_rows[0].reload()
+
+		self.assertEqual(running_rows[0].status, "Success")  # the one that finished
+		self.assertEqual(running_rows[1].status, "Running")  # untouched
+		self.assertEqual(running_rows[2].status, "Running")  # untouched
+
+		pending_statuses = [row.status for row in pending_rows]
+		self.assertEqual(pending_statuses.count("Starting"), 1, "exactly one pending site must start")
+		self.assertEqual(pending_statuses.count("Pending"), 1, "the other pending site must stay untouched")
+
+		active = frappe.db.count(
+			"Release Rollout Site", {"rollout": rollout.name, "status": ("in", ("Starting", "Running"))}
+		)
+		self.assertEqual(active, 3, "concurrency must be held constant, not exceeded or reduced")
