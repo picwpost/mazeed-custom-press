@@ -38,3 +38,15 @@ def apply_overrides():
 		if _original_update_all_sites is None:
 			_original_update_all_sites = Bench.update_all_sites
 		Bench.update_all_sites = custom_update_all_sites
+
+
+def call_original_update_all_sites(bench_doc):
+	"""Run Press's real, un-patched per-bench update_all_sites.
+
+	The legacy fallback path (flag off) needs this: it can no longer call
+	`bench_doc.update_all_sites()` directly, since that name now resolves to
+	our own override and would recurse into itself forever.
+	"""
+	if _original_update_all_sites is None:
+		apply_overrides()
+	return _original_update_all_sites(bench_doc)

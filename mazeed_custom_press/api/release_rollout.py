@@ -28,14 +28,16 @@ def rollout_queue_enabled() -> bool:
 
 
 def run_legacy_update_all_sites(name):
+	from mazeed_custom_press.overrides.bench import call_original_update_all_sites
+
 	benches = frappe.get_all("Bench", {"group": name, "status": "Active"})
 	logger.info(f"run_legacy_update_all_sites: release_group={name} active_benches={[b['name'] for b in benches]}")
 	for bench in benches:
-		frappe.get_cached_doc("Bench", bench).update_all_sites()
+		call_original_update_all_sites(frappe.get_cached_doc("Bench", bench["name"]))
 
 
 def _check_rollout_access(rollout_name: str):
-	from press.api.site import has_support_access
+	from press.access.support_access import has_support_access
 	from press.utils import get_current_team
 
 	release_group = frappe.db.get_value("Release Rollout", rollout_name, "release_group")
