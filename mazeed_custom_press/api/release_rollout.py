@@ -36,8 +36,24 @@ def run_legacy_update_all_sites(name):
 		call_original_update_all_sites(frappe.get_cached_doc("Bench", bench["name"]))
 
 
+def _get_has_support_access():
+	# Support-agent access is not present in every Press build this app runs
+	# against (confirmed absent entirely -- no module, no function, under any
+	# name -- in the fork currently deployed to production). Rather than hard
+	# import a path that may not exist, degrade gracefully: without it, System
+	# User and team-owner access (checked before this is ever called) still
+	# work unaffected -- only the extra support-agent grant is unavailable.
+	for module_path in ("press.access.support_access", "press.api.site"):
+		try:
+			module = __import__(module_path, fromlist=["has_support_access"])
+			return module.has_support_access
+		except (ModuleNotFoundError, ImportError, AttributeError):
+			continue
+	logger.info("_check_rollout_access: has_support_access not available in this Press build")
+	return None
+
+
 def _check_rollout_access(rollout_name: str):
-	from press.access.support_access import has_support_access
 	from press.utils import get_current_team
 
 	release_group = frappe.db.get_value("Release Rollout", rollout_name, "release_group")
@@ -48,7 +64,8 @@ def _check_rollout_access(rollout_name: str):
 		return
 	if frappe.db.get_value("Release Group", release_group, "team") == get_current_team():
 		return
-	if has_support_access("Release Group", release_group):
+	has_support_access = _get_has_support_access()
+	if has_support_access and has_support_access("Release Group", release_group):
 		return
 	frappe.throw("Not Permitted", frappe.PermissionError)
 
