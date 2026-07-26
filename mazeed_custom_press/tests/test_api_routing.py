@@ -95,14 +95,20 @@ class TestFlagAndRouter(FrappeTestCase):
 			self.assertFalse(router.rollout_queue_enabled())
 
 	def test_legacy_helper_preserves_active_bench_selection(self):
+		# Must call the real, un-patched Bench.update_all_sites via
+		# call_original_update_all_sites -- calling `.update_all_sites()`
+		# directly would hit our own override and recurse into itself forever,
+		# since Bench.update_all_sites is monkey-patched at runtime.
 		with (
 			patch("frappe.get_all", return_value=[{"name": "bench-1"}]) as get_all,
 			patch("frappe.get_cached_doc") as get_cached_doc,
+			patch("mazeed_custom_press.overrides.bench.call_original_update_all_sites") as call_original,
 		):
 			router.run_legacy_update_all_sites("group-1")
 
 		get_all.assert_called_once_with("Bench", {"group": "group-1", "status": "Active"})
-		get_cached_doc.return_value.update_all_sites.assert_called_once_with()
+		get_cached_doc.assert_called_once_with("Bench", "bench-1")
+		call_original.assert_called_once_with(get_cached_doc.return_value)
 
 	def test_flag_reads_press_settings_once(self):
 		with (
