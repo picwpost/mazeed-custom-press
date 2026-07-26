@@ -57,6 +57,22 @@ class TestRolloutCreation(FrappeTestCase):
 		result = create_release_rollout(group)
 		self.assertTrue(frappe.db.exists("Release Rollout", result["rollout"]))
 
+	def test_data_05_skip_backups_for_main_stage_defaults_from_press_settings(self):
+		group, _, _ = make_group_with_sites()
+		frappe.db.set_single_value("Press Settings", "rollout_skip_backups_for_main_stage", 1)
+		result = create_release_rollout(group)
+		self.assertEqual(
+			frappe.db.get_value("Release Rollout", result["rollout"], "skip_backups_for_main_stage"), 1
+		)
+
+	def test_data_06_skip_backups_for_main_stage_explicit_argument_overrides_settings(self):
+		group, _, _ = make_group_with_sites()
+		frappe.db.set_single_value("Press Settings", "rollout_skip_backups_for_main_stage", 1)
+		result = create_release_rollout(group, skip_backups_for_main_stage=False)
+		self.assertEqual(
+			frappe.db.get_value("Release Rollout", result["rollout"], "skip_backups_for_main_stage"), 0
+		)
+
 	def test_snap_01_only_sites_on_active_benches_are_selected(self):
 		group = fabricate_release_group()
 		active_bench = fabricate_bench(group, status="Active")
@@ -124,16 +140,38 @@ class TestRolloutCreation(FrappeTestCase):
 		self.assertIn("No eligible sites", str(context.exception))
 		self.assertFalse(frappe.db.exists("Release Rollout", {"release_group": group}))
 
-	def test_snap_06_creation_never_commits_and_an_insert_failure_rolls_back_everything(self):
-		from mazeed_custom_press.mazeed_custom_press.doctype.release_rollout_site.release_rollout_site import (
-			ReleaseRolloutSite,
+	def test_snap_05b_sites_are_written_with_a_single_bulk_insert_call(self):
+		# At 30k sites, one insert() per row holds the Release Group's row
+		# lock for the whole loop. Pin that the snapshot goes through exactly
+		# one bulk_insert() call instead, so this cannot silently regress
+		# back to a per-row loop.
+		from mazeed_custom_press import release_rollout
+
+		group, _, _ = make_group_with_sites(("Active", "Active", "Active", "Active"))
+		with patch(
+			"mazeed_custom_press.release_rollout.bulk_insert", wraps=release_rollout.bulk_insert
+		) as bulk_insert_spy:
+			result = create_release_rollout(group)
+
+		bulk_insert_spy.assert_called_once()
+		call_args = bulk_insert_spy.call_args
+		self.assertEqual(call_args.args[0], "Release Rollout Site")
+		self.assertEqual(len(list(call_args.args[1])), 4)
+		self.assertEqual(
+			frappe.db.count("Release Rollout Site", {"rollout": result["rollout"]}), 4
 		)
 
+	def test_snap_06_creation_never_commits_and_an_insert_failure_rolls_back_everything(self):
+		# Rows are now written with a single bulk_insert() call (not one
+		# insert() per site), so the realistic failure point to simulate is
+		# that call itself, not a per-row Document hook.
 		group, _, _ = make_group_with_sites(("Active", "Active", "Active"))
-		failing_insert = Mock(side_effect=[None, None, frappe.ValidationError("third row broke")])
 		with (
 			patch.object(frappe.db, "commit") as commit,
-			patch.object(ReleaseRolloutSite, "before_insert", failing_insert, create=True),
+			patch(
+				"mazeed_custom_press.release_rollout.bulk_insert",
+				side_effect=frappe.ValidationError("bulk insert broke"),
+			),
 			self.assertRaises(frappe.ValidationError),
 		):
 			create_release_rollout(group)

@@ -147,3 +147,27 @@ class TestStartRolloutSite(FrappeTestCase):
 		row.reload()
 		self.assertEqual(row.status, "Pending")
 		self.assertEqual(site_updates_for(row.name), [])
+
+	def test_start_08_skip_backups_for_main_stage_spares_canaries(self):
+		from press.press.doctype.site.test_site import create_test_site
+
+		environment = create_updateable_site_environment()
+		main_site = create_test_site(bench=environment.bench1.name)
+		rollout = make_rollout(
+			environment.group.name, total_sites=2, skip_backups_for_main_stage=1
+		)
+		canary_row = make_rollout_site(
+			rollout.name, environment.site.name, environment.bench1.name, status="Starting", is_canary=1
+		)
+		main_row = make_rollout_site(
+			rollout.name, main_site.name, environment.bench1.name, status="Starting", is_canary=0
+		)
+
+		with mock_agent():
+			start_rollout_site(canary_row.name)
+			start_rollout_site(main_row.name)
+
+		canary_update = frappe.db.get_value("Site Update", {"release_rollout_site": canary_row.name}, "skipped_backups")
+		main_update = frappe.db.get_value("Site Update", {"release_rollout_site": main_row.name}, "skipped_backups")
+		self.assertEqual(canary_update, 0)
+		self.assertEqual(main_update, 1)

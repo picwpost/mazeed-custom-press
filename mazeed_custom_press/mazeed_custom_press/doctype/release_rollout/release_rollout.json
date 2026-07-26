@@ -4,28 +4,53 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "dashboard_html",
+  "details_section",
   "release_group",
+  "column_break_status",
   "status",
+  "column_break_stage",
   "stage",
+  "config_section",
   "max_concurrent_updates",
+  "column_break_canary_size",
   "canary_size",
+  "column_break_skip_backups",
+  "skip_backups_for_main_stage",
+  "canary_tracking_section",
   "canary_status",
+  "column_break_canary_started",
   "canary_started_at",
+  "column_break_canary_finished",
   "canary_finished_at",
+  "site_counts_section",
   "total_sites",
+  "column_break_pending",
   "pending_sites",
+  "column_break_starting",
   "starting_sites",
+  "column_break_running",
   "running_sites",
+  "site_outcomes_section",
   "success_sites",
+  "column_break_recovered",
   "recovered_sites",
+  "column_break_failed",
   "failed_sites",
+  "column_break_skipped",
   "skipped_sites",
+  "column_break_cancelled",
   "cancelled_sites",
+  "timing_section",
   "started_at",
+  "column_break_finished",
   "finished_at",
+  "column_break_started_by",
   "started_by",
+  "column_break_reconciled",
   "last_reconciled_at",
-  "dashboard_html"
+  "sites_section",
+  "sites_table_html"
  ],
  "fields": [
   {
@@ -66,6 +91,13 @@
    "fieldtype": "Int",
    "label": "Canary Size",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "skip_backups_for_main_stage",
+   "fieldtype": "Check",
+   "label": "Skip Backups For Main Stage",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -170,10 +202,114 @@
    "fieldname": "dashboard_html",
    "fieldtype": "HTML",
    "label": "Operations Dashboard"
+  },
+  {
+   "fieldname": "sites_table_html",
+   "fieldtype": "HTML",
+   "label": "Sites"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_stage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "config_section",
+   "fieldtype": "Section Break",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "column_break_canary_size",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_skip_backups",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "canary_tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Canary Tracking"
+  },
+  {
+   "fieldname": "column_break_canary_started",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_canary_finished",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "site_counts_section",
+   "fieldtype": "Section Break",
+   "label": "Site Counts"
+  },
+  {
+   "fieldname": "column_break_pending",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_starting",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_running",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "site_outcomes_section",
+   "fieldtype": "Section Break",
+   "label": "Site Outcomes"
+  },
+  {
+   "fieldname": "column_break_recovered",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_failed",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_skipped",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_cancelled",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "timing_section",
+   "fieldtype": "Section Break",
+   "label": "Timing"
+  },
+  {
+   "fieldname": "column_break_finished",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_started_by",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_reconciled",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sites_section",
+   "fieldtype": "Section Break",
+   "label": "Sites"
   }
  ],
  "links": [],
- "modified": "2026-07-13 00:00:00.000000",
+ "modified": "2026-07-26 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mazeed Custom Press",
  "name": "Release Rollout",

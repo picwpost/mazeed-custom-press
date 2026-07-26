@@ -54,14 +54,15 @@ async function refresh_rollout_dashboard(frm) {
 	]);
 	const summary = summary_response.message;
 	const sites = sites_response.message || [];
-	frm.fields_dict.dashboard_html.$wrapper.html(render_rollout_dashboard(summary, sites, view));
+	frm.fields_dict.dashboard_html.$wrapper.html(render_dashboard_header(summary));
+	frm.fields_dict.sites_table_html.$wrapper.html(render_sites_table(summary, sites, view));
 	bind_dashboard_controls(frm);
 	if (!["Running", "Paused"].includes(summary.status)) clearInterval(frm.rollout_refresh_timer);
 }
 
 function bind_dashboard_controls(frm) {
 	const view = frm.rollout_view;
-	const wrapper = frm.fields_dict.dashboard_html.$wrapper;
+	const wrapper = frm.fields_dict.sites_table_html.$wrapper;
 	wrapper.find(".rollout-status-filter").on("change", function () {
 		view.status = this.value;
 		view.start = 0;
@@ -101,7 +102,7 @@ function format_duration(start, end, server_time) {
 	return hours ? `${hours}h ${minutes}m` : minutes ? `${minutes}m ${secs}s` : `${secs}s`;
 }
 
-function render_rollout_dashboard(summary, sites, view) {
+function render_dashboard_header(summary) {
 	const esc = frappe.utils.escape_html;
 	const canary_color = CANARY_COLORS[summary.canary_status] || CANARY_COLORS.Pending;
 	const elapsed = format_duration(summary.started_at, summary.finished_at, summary.server_time);
@@ -143,6 +144,13 @@ function render_rollout_dashboard(summary, sites, view) {
 		<div class="border rounded p-3"><div class="text-muted">${esc(label)}</div><strong>${value || 0}</strong></div>
 	`).join("");
 
+	return `
+		${header}
+		<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px" class="mb-2">${card_html}</div>`;
+}
+
+function render_sites_table(summary, sites, view) {
+	const esc = frappe.utils.escape_html;
 	const statuses = ["", "Pending", "Starting", "Running", "Success", "Recovered", "Fatal", "Skipped", "Cancelled"];
 	const status_options = statuses.map((status) =>
 		`<option value="${status}" ${view.status === status ? "selected" : ""}>${status || __("All Statuses")}</option>`
@@ -174,8 +182,6 @@ function render_rollout_dashboard(summary, sites, view) {
 		</tr>
 	`).join("");
 	return `
-		${header}
-		<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px" class="mb-4">${card_html}</div>
 		${controls}
 		<div class="table-responsive"><table class="table table-bordered table-sm">
 		<thead><tr><th>${__("Site")}</th><th>${__("Canary")}</th><th>${__("Bench")}</th><th>${__("Status")}</th>

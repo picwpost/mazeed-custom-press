@@ -32,6 +32,20 @@ CUSTOM_FIELDS = {
 			"insert_after": "rollout_max_concurrent_updates",
 			"depends_on": "eval:doc.enable_release_rollout_queue",
 		},
+		{
+			"fieldname": "rollout_skip_backups_for_main_stage",
+			"label": "Rollout: Skip Backups For Main Stage",
+			"fieldtype": "Check",
+			"default": "0",
+			"description": (
+				"Skip the pre-migrate backup for main-stage sites in a rollout, once the canary "
+				"has already proven the update safe. Canary sites always still get a backup. This "
+				"only skips the one-off backup taken immediately before this update -- the regular "
+				"scheduled site backup system is entirely separate and is never affected."
+			),
+			"insert_after": "rollout_canary_size",
+			"depends_on": "eval:doc.enable_release_rollout_queue",
+		},
 	],
 	"Site Update": [
 		{
