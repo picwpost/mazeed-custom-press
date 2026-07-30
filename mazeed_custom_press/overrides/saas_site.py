@@ -46,6 +46,11 @@ class CustomSaasSite(SaasSite):
 		if config:
 			self._update_configuration(self._normalize_config(config), save=False)
 		self.save(ignore_permissions=True)
+		# Commit here so the site claim + save don't stay locked through
+		# subscription creation and the Agent Job insert below — holding one
+		# long transaction across all of it was causing lock wait timeouts
+		# under concurrent pooled-site requests.
+		frappe.db.commit()
 		self.create_subscription(plan)
 		self.reload()
 		Agent(self.server).update_site_config(self)

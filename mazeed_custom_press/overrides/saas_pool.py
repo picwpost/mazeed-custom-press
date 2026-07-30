@@ -91,7 +91,12 @@ def custom_get_subdomain(self):
 
 
 def custom_get(self, hybrid_saas_pool):
-	"""Override for press.press.doctype.site.saas_pool.SaasSitePool.get."""
+	"""Override for press.press.doctype.site.saas_pool.SaasSitePool.get.
+
+	Claims a pooled site atomically via a conditional UPDATE instead of a plain
+	SELECT, so two concurrent callers can't both be handed the same standby
+	site (the resulting double-claim was causing lock wait timeouts downstream
+	on the Agent Job insert)."""
 	filters = {
 		"is_standby": True,
 		"standby_for": self.app,
@@ -104,9 +109,17 @@ def custom_get(self, hybrid_saas_pool):
 	else:
 		filters.update({"hybrid_saas_pool": ("is", "not set")})
 
-	sites = frappe.get_all("Site", filters, pluck="name", order_by="creation", limit=1)
+	candidates = frappe.get_all("Site", filters, pluck="name", order_by="creation", limit=5)
 
-	return sites[0] if sites else sites
+	for site_name in candidates:
+		frappe.db.sql(
+			"UPDATE `tabSite` SET is_standby = 0 WHERE name = %s AND is_standby = 1",
+			site_name,
+		)
+		if frappe.db._cursor.rowcount:
+			return site_name
+
+	return None
 
 
 def apply_overrides():
