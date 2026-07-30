@@ -17,7 +17,7 @@ Entry format:
 ---
 
 ## 2026-07-30 — fix(SaasPool/SaasSite): atomic pooled-site claim + earlier commit to stop lock wait timeouts
-- Commit: (pending — fill in after commit)
+- Commit: `e92c512`
 - What changed: `custom_get` in `overrides/saas_pool.py` now claims a pooled
   standby site via a conditional `UPDATE tabSite SET is_standby = 0 WHERE
   name = %s AND is_standby = 1` over a batch of candidates, instead of a
