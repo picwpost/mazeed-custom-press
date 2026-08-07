@@ -16,6 +16,26 @@ Entry format:
 
 ---
 
+## 2026-08-07 — feat(proxy-scaling): per-Cluster agent source override for dev-cluster validation
+- Commit: `09473a9`
+- What changed: Added `Cluster.custom_agent_repository_owner`/`custom_agent_branch`
+  custom fields (blank by default) and a new `overrides/agent_source.py` that
+  patches `BaseServer.get_agent_repository_url`/`get_agent_repository_branch`
+  to check those fields first, falling back to the existing global Press
+  Settings values when blank. Registered in `hooks.py`'s `before_request`/
+  `before_job`.
+- Why: Press Settings only exposes one global `agent_repository_owner`/`branch`,
+  applied identically to every `Server`/`Proxy Server` -- there was no way to
+  run a modified `agent/` build on a development cluster while production
+  kept the default. This is the prerequisite for validating the Phase 1
+  proxy-tier scaling plan (`doc/phase1-proxy-tier-plan.md`), which needs a
+  dev cluster running modified agent code before any change reaches
+  production.
+- Files: `mazeed_custom_press/install.py`, `mazeed_custom_press/overrides/agent_source.py`,
+  `mazeed_custom_press/hooks.py`, `mazeed_custom_press/tests/test_agent_source.py`
+
+---
+
 ## 2026-07-30 — fix(SaasPool/SaasSite): atomic pooled-site claim + earlier commit to stop lock wait timeouts
 - Commit: `e92c512`
 - What changed: `custom_get` in `overrides/saas_pool.py` now claims a pooled
