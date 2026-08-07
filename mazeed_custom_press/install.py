@@ -58,6 +58,27 @@ CUSTOM_FIELDS = {
 			"unique": 1,
 		}
 	],
+	"Cluster": [
+		{
+			"fieldname": "custom_agent_repository_owner",
+			"label": "Custom Agent Repository Owner",
+			"fieldtype": "Data",
+			"description": (
+				"Overrides Press Settings' global agent_repository_owner for every Server/Proxy "
+				"Server in this cluster. Leave blank to use the global default -- only set this "
+				"on a cluster that should run a different agent fork/branch (e.g. a development "
+				"cluster validating agent changes before they reach production)."
+			),
+			"insert_after": "description",
+		},
+		{
+			"fieldname": "custom_agent_branch",
+			"label": "Custom Agent Branch",
+			"fieldtype": "Data",
+			"description": "Overrides Press Settings' global branch for the agent repository, scoped to this cluster. Leave blank to use the global default.",
+			"insert_after": "custom_agent_repository_owner",
+		},
+	],
 }
 
 
