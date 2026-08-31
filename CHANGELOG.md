@@ -16,6 +16,20 @@ Entry format:
 
 ---
 
+## 2026-08-31 — feat(saas_site): route mazeed_copilot through Phase 1 pooled-site rename
+- Commit: `9b790bc`
+- What changed: Added `mazeed_copilot` to the app-name check in
+  `CustomSaasSite.rename_pooled_site`, so it routes through
+  `_rename_pooled_site_erpnext` (Phase 1 only: metadata/config update,
+  no subdomain change, no agent rename job) like `erpnext` and
+  `mazeed_theme`.
+- Why: New Mazeed app needs the same pooled-site claim behaviour as the
+  existing custom apps. Note: requires a `Saas Settings` record named
+  `mazeed_copilot` (with `site_plan` etc.) to exist for
+  `get_saas_site_plan` to resolve a plan — this is a data setup step,
+  not covered by this commit.
+- Files: `mazeed_custom_press/overrides/saas_site.py`
+
 ## 2026-08-07 — feat(proxy-scaling): per-Cluster agent source override for dev-cluster validation
 - Commit: `09473a9`
 - What changed: Added `Cluster.custom_agent_repository_owner`/`custom_agent_branch`
