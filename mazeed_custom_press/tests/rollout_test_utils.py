@@ -49,8 +49,10 @@ def fabricate_bench(group: str, status: str = "Active") -> str:
 	return fabricate("Bench", group=group, status=status)
 
 
-def fabricate_site(bench: str, status: str = "Active") -> str:
-	return fabricate("Site", bench=bench, status=status)
+def fabricate_site(bench: str, status: str = "Active", name: str | None = None, **fields) -> str:
+	# `name` matters for canary tests: selection used to be first-N by name, so
+	# a test proving a choice was honoured has to control the ordering.
+	return fabricate("Site", name=name, bench=bench, status=status, **fields)
 
 
 def fabricate_site_update(site: str, status: str = "Pending", **fields) -> str:

@@ -8,6 +8,9 @@ from frappe.tests.utils import FrappeTestCase
 from mazeed_custom_press.release_rollout import start_next_sites, start_rollout_site, sync_site_update
 from mazeed_custom_press.tests.rollout_test_utils import (
 	create_updateable_site_environment,
+	fabricate_bench,
+	fabricate_release_group,
+	fabricate_site,
 	fabricate_site_update,
 	make_rollout,
 	make_rollout_site,
@@ -224,3 +227,53 @@ class TestSiteUpdateSynchronization(FrappeTestCase):
 			"Release Rollout Site", {"rollout": rollout.name, "status": ("in", ("Starting", "Running"))}
 		)
 		self.assertEqual(active, 3, "concurrency must be held constant, not exceeded or reduced")
+
+	def test_event_11_adopts_a_site_update_press_already_scheduled_outside_this_rollout(self):
+		# Press's own deploy flow (Bench Update -> update_sites_on_server) can call
+		# site.schedule_update() for a site on its own once a new Bench goes Active,
+		# independently of this rollout. That Site Update must be adopted, not raced
+		# against -- and schedule_update() must never even be attempted for this site.
+		group = fabricate_release_group()
+		bench = fabricate_bench(group)
+		site = fabricate_site(bench)
+		pre_existing_update = fabricate_site_update(site, status="Running")
+
+		rollout = make_rollout(group)
+		row = make_rollout_site(rollout.name, site, bench, status="Starting")
+
+		from press.press.doctype.site.site import Site
+
+		with patch.object(Site, "schedule_update") as schedule_update:
+			start_rollout_site(row.name)
+			schedule_update.assert_not_called()
+
+		row.reload()
+		self.assertEqual(row.status, "Running")
+		self.assertEqual(row.site_update, pre_existing_update)
+
+	def test_event_12_does_not_adopt_a_site_update_already_claimed_by_another_row(self):
+		# A Site Update already tracked by a different Release Rollout Site row is
+		# not up for grabs -- adoption must never let two rows point at the same
+		# Site Update, no matter which rollout claimed it first.
+		from press.press.doctype.agent_job.agent_job import AgentJob
+
+		group = fabricate_release_group()
+		bench = fabricate_bench(group)
+		site = fabricate_site(bench)
+		claimed_update = fabricate_site_update(site, status="Running")
+
+		other_group = fabricate_release_group()
+		other_rollout = make_rollout(other_group)
+		other_bench = fabricate_bench(other_group)
+		make_rollout_site(
+			other_rollout.name, site, other_bench, status="Running", site_update=claimed_update
+		)
+
+		rollout = make_rollout(group)
+		row = make_rollout_site(rollout.name, site, bench, status="Starting")
+
+		with patch.object(AgentJob, "enqueue_http_request", new=Mock()):
+			start_rollout_site(row.name)
+
+		row.reload()
+		self.assertNotEqual(row.site_update, claimed_update)

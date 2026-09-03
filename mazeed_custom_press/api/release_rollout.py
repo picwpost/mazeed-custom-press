@@ -9,15 +9,62 @@ from mazeed_custom_press.release_rollout import create_release_rollout, logger
 
 @frappe.whitelist()
 @protected("Release Group")
-def update_all_sites(name, source_bench=None):
+def update_all_sites(name, source_bench=None, canary_sites=None):
+	"""Start a rollout for a release group.
+
+	`canary_sites` is optional and overrides canary selection for this rollout
+	only. Omit it and selection falls to the sites flagged "Use as Rollout
+	Canary", then to the first few by name. The dashboard button calls this
+	without it, so its behaviour is unchanged.
+	"""
 	enabled = rollout_queue_enabled()
 	logger.info(
 		f"update_all_sites: release_group={name} source_bench={source_bench} "
-		f"user={frappe.session.user} rollout_queue_enabled={enabled}"
+		f"canary_sites={canary_sites} user={frappe.session.user} rollout_queue_enabled={enabled}"
 	)
 	if enabled:
-		return create_release_rollout(name, source_bench=source_bench)
+		return create_release_rollout(name, source_bench=source_bench, canary_sites=canary_sites)
+	if canary_sites:
+		# The legacy path has no canary stage at all, so honouring the argument
+		# is impossible. Say so rather than dropping it and updating everything
+		# at once when the operator asked for a gated release.
+		frappe.throw(
+			"Canary sites require the release rollout queue. "
+			"Enable it in Press Settings, or start the rollout without selecting canaries."
+		)
 	return run_legacy_update_all_sites(name, source_bench=source_bench)
+
+
+@frappe.whitelist()
+@protected("Release Group")
+def get_canary_candidates(name, source_bench=None):
+	"""Sites a rollout of this group could use as canaries, for a picker.
+
+	Mirrors the selection create_release_rollout() will make, so what the
+	operator sees is what the rollout would actually do.
+	"""
+	from mazeed_custom_press.release_rollout import CANARY_FLAG_FIELD, ELIGIBLE_SITE_STATUSES
+
+	if source_bench:
+		benches = [source_bench]
+	else:
+		benches = frappe.get_all(
+			"Bench", filters={"group": name, "status": "Active"}, pluck="name", order_by="name"
+		)
+	if not benches:
+		return []
+	fields = ["name", "bench", "status"]
+	if frappe.get_meta("Site").has_field(CANARY_FLAG_FIELD):
+		fields.append(CANARY_FLAG_FIELD)
+	sites = frappe.get_all(
+		"Site",
+		filters={"bench": ("in", benches), "status": ("in", ELIGIBLE_SITE_STATUSES)},
+		fields=fields,
+		order_by="name",
+	)
+	for site in sites:
+		site["is_flagged_canary"] = bool(cint(site.pop(CANARY_FLAG_FIELD, 0)))
+	return sites
 
 
 def rollout_queue_enabled() -> bool:
