@@ -144,3 +144,33 @@ def after_migrate():
 	# checks in press/api/site.py -- does a full table scan. Adding it here
 	# instead of patching Press directly.
 	frappe.db.add_index("Agent Job", ["site", "creation"])
+
+	# The hourly local-backup expiry sweep (BackupRotationScheme.expire_local_backups)
+	# filters on exactly these four fixed equality columns plus a creation-date range
+	# for every site in its IN() list; none of them are indexed (Press's
+	# on_doctype_update only covers (files_availability, job)), so it full-scans
+	# the entire Site Backup table every run.
+	frappe.db.add_index(
+		"Site Backup", ["status", "files_availability", "physical", "offsite", "creation"]
+	)
+
+	# Press's get_unread_count (press.api.notifications) filters on team+read with
+	# no index at all on either column, full-scanning Press Notification on every
+	# dashboard session bootstrap.
+	frappe.db.add_index("Press Notification", ["team", "read"])
+
+	# press.api.site.get_sites_query filters Site by team, ordered by creation desc;
+	# Site.team has a single-column search_index but nothing covers the sort,
+	# causing a full scan + filesort.
+	frappe.db.add_index("Site", ["team", "creation"])
+
+	# Team.get_trial_sites filters Site by team (plus is_standby/trial_end_date/
+	# status, left unindexed -- narrow enough once team is applied), ordered by
+	# modified desc. Runs on every Team doc fetch, so this is hit very often.
+	frappe.db.add_index("Site", ["team", "modified"])
+
+	# Site_update.mark_stuck_updates_as_fatal (hourly_long) filters on
+	# (status, modified); Press's on_doctype_update for Site Update only covers
+	# (site, source_candidate, destination_candidate) and (server, status),
+	# neither of which helps this sweep.
+	frappe.db.add_index("Site Update", ["status", "modified"])
