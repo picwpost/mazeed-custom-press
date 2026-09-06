@@ -105,3 +105,17 @@ def after_migrate():
 	# checks in press/api/site.py -- does a full table scan. Adding it here
 	# instead of patching Press directly.
 	frappe.db.add_index("Agent Job", ["site", "creation"])
+
+	# The hourly local-backup expiry sweep (BackupRotationScheme.expire_local_backups)
+	# filters on exactly these four fixed equality columns plus a creation-date range
+	# for every site in its IN() list; none of them are indexed (Press's
+	# on_doctype_update only covers (files_availability, job)), so it full-scans
+	# the entire Site Backup table every run.
+	frappe.db.add_index(
+		"Site Backup", ["status", "files_availability", "physical", "offsite", "creation"]
+	)
+
+	# Press's get_unread_count (press.api.notifications) filters on team+read with
+	# no index at all on either column, full-scanning Press Notification on every
+	# dashboard session bootstrap.
+	frappe.db.add_index("Press Notification", ["team", "read"])
