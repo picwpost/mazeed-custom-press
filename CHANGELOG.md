@@ -16,6 +16,27 @@ Entry format:
 
 ---
 
+## 2026-09-06 — fix(install): add missing indexes on Site and Site Update
+- Commit: `4c8cfe5`
+- What changed: `after_migrate()` now also calls
+  `frappe.db.add_index("Site", ["team", "creation"])`,
+  `frappe.db.add_index("Site", ["team", "modified"])`, and
+  `frappe.db.add_index("Site Update", ["status", "modified"])`.
+- Why: Same `saas-restore` slow-query review as `af68687`. `Site`'s
+  existing single-column index on `team` didn't cover the `ORDER BY
+  creation DESC` used by the dashboard site list (full scan + filesort,
+  12,766 rows examined / 6,383 returned) nor the `ORDER BY modified DESC`
+  used by `Team.get_trial_sites` (9,343 examined / 2,960 returned; this
+  one runs on every Team doc fetch). `Site Update`'s
+  `mark_stuck_updates_as_fatal` hourly sweep filters on
+  `(status, modified)`, uncovered by Press's existing `(site,
+  source_candidate, destination_candidate)` / `(server, status)`
+  indexes (46,691 examined, 0 affected). Completes the batch from
+  https://claude.ai/code/artifact/7da9e752-6d61-4dc8-a79a-93c5288273f1
+  -- the remaining 2 of the 7 queries were already fixed by `497ecf8`'s
+  Agent Job index.
+- Files: `mazeed_custom_press/install.py`
+
 ## 2026-09-06 — fix(install): add missing indexes on Site Backup and Press Notification
 - Commit: `af68687`
 - What changed: `after_migrate()` now also calls
