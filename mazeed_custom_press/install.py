@@ -115,6 +115,12 @@ def after_migrate():
 		"Site Backup", ["status", "files_availability", "physical", "offsite", "creation"]
 	)
 
+	# The dashboard's Site "Backups" tab and the global Site Backups page both
+	# filter Site Backup by `site` alone (ordered by creation desc); no index
+	# covers `site` as a leading column (on_doctype_update only covers
+	# (files_availability, job)), so it full-scans the whole table.
+	frappe.db.add_index("Site Backup", ["site", "creation"])
+
 	# Press's get_unread_count (press.api.notifications) filters on team+read with
 	# no index at all on either column, full-scanning Press Notification on every
 	# dashboard session bootstrap.
