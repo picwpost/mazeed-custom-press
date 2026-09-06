@@ -14,6 +14,13 @@ logger = frappe.logger("mazeed_rollout", allow_site=True, file_count=20)
 logger.setLevel(logging.INFO)
 
 ELIGIBLE_SITE_STATUSES = ("Active", "Inactive", "Suspended")
+# Custom field on Site, added by install.py. A standing preference that survives
+# across rollouts, as opposed to the per-rollout `canary_sites` argument.
+CANARY_FLAG_FIELD = "use_as_rollout_canary"
+# Mirrors press.press.doctype.site_update.site_update.SiteUpdate.has_pending_updates --
+# any Site Update in one of these statuses blocks Press from creating another one for
+# the same site, so this is also exactly the set worth adopting rather than racing.
+ADOPTABLE_SITE_UPDATE_STATUSES = ("Pending", "Running", "Scheduled", "Recovering", "Failure")
 TERMINAL_SITE_UPDATE_MAP = {
 	"Success": "Success",
 	"Recovered": "Recovered",
@@ -32,6 +39,8 @@ def create_release_rollout(
 	max_concurrent_updates=None,
 	canary_size=None,
 	skip_backups_for_main_stage=None,
+	max_concurrent_updates_per_server=None,
+	canary_sites=None,
 ):
 	logger.info(f"create_release_rollout: start release_group={release_group} source_bench={source_bench}")
 
@@ -91,10 +100,32 @@ def create_release_rollout(
 		canaries = min(cint(settings_canary) if settings_canary is not None else 2, len(sites))
 	else:
 		canaries = cint(canary_size)
+	if max_concurrent_updates_per_server is None:
+		per_server_limit = cint(
+			frappe.db.get_single_value("Press Settings", "rollout_max_concurrent_updates_per_server")
+		)
+	else:
+		per_server_limit = cint(max_concurrent_updates_per_server)
 	if limit <= 0:
 		frappe.throw(_("Max concurrent updates must be greater than zero"))
+	if per_server_limit < 0:
+		frappe.throw(_("Max concurrent updates per server cannot be negative"))
+	# 0 means "no separate per-server cap": use the rollout total, which is
+	# exactly how scheduling behaved before this field existed. Anything else
+	# would silently throttle rollouts that had already raised the total, and
+	# since most release groups sit on a single server that would cut
+	# throughput instead of raising it.
+	per_server_limit = per_server_limit or limit
 	if canaries < 0 or canaries > len(sites):
 		frappe.throw(_("Canary size must be between 0 and {0}").format(len(sites)))
+	canary_names = _resolve_canary_sites(
+		sites=sites,
+		benches=benches,
+		canary_sites=canary_sites,
+		canary_size_was_explicit=canary_size is not None,
+		fallback_count=canaries,
+	)
+	canaries = len(canary_names)
 	if skip_backups_for_main_stage is None:
 		skip_backups = bool(cint(frappe.db.get_single_value("Press Settings", "rollout_skip_backups_for_main_stage")))
 	else:
@@ -107,6 +138,7 @@ def create_release_rollout(
 		"status": "Running",
 		"stage": "Canary" if canaries else "Main",
 		"max_concurrent_updates": limit,
+		"max_concurrent_updates_per_server": per_server_limit,
 		"canary_size": canaries,
 		"skip_backups_for_main_stage": skip_backups,
 		"canary_status": "Pending" if canaries else "Passed",
@@ -124,7 +156,7 @@ def create_release_rollout(
 	# (plain Document subclass), so skipping the per-row Document lifecycle
 	# changes nothing here.
 	rollout_site_docs = []
-	for index, site in enumerate(sites):
+	for site in sites:
 		doc = frappe.get_doc({
 			"doctype": "Release Rollout Site",
 			"rollout": rollout.name,
@@ -132,7 +164,7 @@ def create_release_rollout(
 			"source_bench": site.bench,
 			"status": "Pending",
 			"priority": 0,
-			"is_canary": index < canaries,
+			"is_canary": site.name in canary_names,
 		})
 		doc.name = frappe.generate_hash(length=10)
 		rollout_site_docs.append(doc)
@@ -140,8 +172,11 @@ def create_release_rollout(
 
 	logger.info(
 		f"create_release_rollout: created rollout={rollout.name} release_group={release_group} "
-		f"sites={len(sites)} canaries={canaries} max_concurrent_updates={limit} skip_backups_for_main_stage={skip_backups}"
+		f"sites={len(sites)} canaries={canaries} max_concurrent_updates={limit} "
+		f"max_concurrent_updates_per_server={per_server_limit} skip_backups_for_main_stage={skip_backups} "
+		f"canary_sites={sorted(canary_names)}"
 	)
+	_scale_burst_workers(rollout.name, start=True)
 	frappe.enqueue(
 		"mazeed_custom_press.release_rollout.start_next_sites",
 		rollout_name=rollout.name,
@@ -151,27 +186,136 @@ def create_release_rollout(
 	return {"rollout": rollout.name, "selected_sites": len(sites)}
 
 
+def _resolve_canary_sites(
+	sites: list,
+	benches: list[str],
+	canary_sites,
+	canary_size_was_explicit: bool,
+	fallback_count: int,
+) -> set[str]:
+	"""Decide which sites gate this rollout.
+
+	Three sources, in descending precedence:
+
+	1. `canary_sites` -- named for this one rollout. Validated strictly: a site
+	   the operator asked for by name and did not get would gate the release on
+	   sites they never chose, which defeats the point of choosing.
+	2. Sites standing-flagged with CANARY_FLAG_FIELD, intersected with this
+	   rollout's selection.
+	3. The first `fallback_count` sites by name -- the original behaviour, kept
+	   so a group with neither an argument nor a flag rolls out as it always has.
+	"""
+	eligible = {site.name for site in sites}
+
+	if canary_sites is not None:
+		requested = _parse_site_names(canary_sites)
+		if not requested:
+			frappe.throw(_("No canary sites were provided"))
+		if canary_size_was_explicit:
+			frappe.throw(
+				_("Pass either canary_sites or canary_size, not both -- the size of an explicit list is the list.")
+			)
+		_reject_ineligible_canaries(requested, eligible, benches)
+		logger.info(f"_resolve_canary_sites: source=explicit sites={sorted(requested)}")
+		return requested
+
+	flagged = _flagged_canary_sites(eligible)
+	if flagged:
+		logger.info(f"_resolve_canary_sites: source=site_flag sites={sorted(flagged)}")
+		return flagged
+
+	positional = {site.name for site in sites[:fallback_count]}
+	logger.info(
+		f"_resolve_canary_sites: source=first_{fallback_count}_by_name sites={sorted(positional)}"
+	)
+	return positional
+
+
+def _parse_site_names(canary_sites) -> set[str]:
+	"""Accept a list, or the JSON string the HTTP layer delivers one as."""
+	if isinstance(canary_sites, str):
+		canary_sites = frappe.parse_json(canary_sites)
+	if isinstance(canary_sites, str):
+		canary_sites = [canary_sites]
+	if not isinstance(canary_sites, (list, tuple, set)):
+		frappe.throw(_("Canary sites must be a list of site names"))
+	return {str(name).strip() for name in canary_sites if str(name).strip()}
+
+
+def _reject_ineligible_canaries(requested: set[str], eligible: set[str], benches: list[str]):
+	"""Refuse the whole rollout if any named canary is not in the selection.
+
+	Reports every bad site with its reason in one throw rather than failing on
+	the first: an operator fixing a list of five wants to see all five problems,
+	not to rerun four times.
+	"""
+	missing = sorted(requested - eligible)
+	if not missing:
+		return
+	reasons = [f"{name} -- {_describe_ineligibility(name, benches)}" for name in missing]
+	frappe.throw(
+		_("These sites cannot be used as canaries:\n\n{0}").format("\n".join(reasons)),
+		title=_("Canary sites are not eligible"),
+	)
+
+
+def _describe_ineligibility(site: str, benches: list[str]) -> str:
+	if not frappe.db.exists("Site", site):
+		return _("no such site")
+	status, bench = frappe.db.get_value("Site", site, ["status", "bench"])
+	if status not in ELIGIBLE_SITE_STATUSES:
+		return _("status is {0}, must be one of {1}").format(status, ", ".join(ELIGIBLE_SITE_STATUSES))
+	if bench not in benches:
+		return _("on bench {0}, which this rollout does not cover").format(bench)
+	return _("not part of this rollout")
+
+
+def _flagged_canary_sites(eligible: set[str]) -> set[str]:
+	"""Standing-flagged canary sites that are actually in this rollout.
+
+	The flag lives on Site and is global, while a rollout covers one release
+	group, so most flagged sites will not appear here -- that is an
+	intersection, not an error. It is also why a stale flag can never block a
+	deploy: an archived or moved-out site quietly stops being picked.
+	"""
+	if not frappe.get_meta("Site").has_field(CANARY_FLAG_FIELD):
+		# Code can reach production before its migrate; no field means no flags.
+		logger.info(f"_flagged_canary_sites: Site has no {CANARY_FLAG_FIELD} field yet (migrate pending?)")
+		return set()
+	flagged = set(frappe.get_all("Site", filters={CANARY_FLAG_FIELD: 1}, pluck="name"))
+	dropped = flagged - eligible
+	if dropped:
+		logger.info(f"_flagged_canary_sites: ignoring flagged sites outside this rollout: {sorted(dropped)}")
+	return flagged & eligible
+
+
 def start_next_sites(rollout_name: str):
 	rollout = _lock_rollout(rollout_name)
 	if rollout.status != "Running":
 		logger.info(f"start_next_sites: rollout={rollout_name} skipped status={rollout.status}")
 		return
 
-	active = frappe.db.count(
-		"Release Rollout Site", {"rollout": rollout.name, "status": ("in", ("Starting", "Running"))}
-	)
+	is_canary = rollout.stage == "Canary"
+	active_per_server = _active_counts_by_server(rollout.name)
+	active = sum(active_per_server.values())
 	available = cint(rollout.max_concurrent_updates) - active
+	# Falls back to the total when unset, which is how rollouts created before
+	# this field existed keep behaving exactly as they did. .get() rather than
+	# attribute access so a deploy that lands this code before its migrate runs
+	# degrades to the old single-cap behaviour instead of raising on every tick.
+	per_server_limit = cint(rollout.get("max_concurrent_updates_per_server")) or cint(
+		rollout.max_concurrent_updates
+	)
 	logger.info(
 		f"start_next_sites: rollout={rollout_name} stage={rollout.stage} "
-		f"active={active} max_concurrent_updates={rollout.max_concurrent_updates} available_slots={available}"
+		f"active={active} max_concurrent_updates={rollout.max_concurrent_updates} "
+		f"per_server_limit={per_server_limit} active_per_server={active_per_server} "
+		f"available_slots={available}"
 	)
 	if available <= 0:
 		return
 
-	filters = {"rollout": rollout.name, "status": "Pending", "is_canary": rollout.stage == "Canary"}
-	rows = frappe.get_all(
-		"Release Rollout Site", filters=filters, pluck="name", order_by="priority desc, creation asc", limit=available
-	)
+	rows = _pick_batch(rollout.name, is_canary, available, per_server_limit, active_per_server)
 	logger.info(f"start_next_sites: rollout={rollout_name} batch_picked={rows}")
 	for row_name in rows:
 		frappe.db.sql(
@@ -192,6 +336,85 @@ def start_next_sites(rollout_name: str):
 			"canary_status": "Running", "canary_started_at": rollout.canary_started_at or now_datetime(),
 		})
 	_recount(rollout.name)
+
+
+# Server comes from a join on Bench rather than a column on the row, so
+# rollouts already in flight when this shipped keep working with no backfill.
+# LEFT JOIN with COALESCE, never an inner join on b.server: a bench whose
+# server is unset -- or a source_bench row that has since been deleted -- would
+# otherwise match no bucket at all and make those sites permanently
+# unschedulable, silently stalling the rollout. They collapse into one unnamed
+# bucket instead, which is scheduled like any other server.
+_SERVER_OF_ROW = "COALESCE(b.server, '')"
+_ROWS_WITH_SERVER = (
+	"`tabRelease Rollout Site` rrs LEFT JOIN `tabBench` b ON b.name = rrs.source_bench"
+)
+
+
+def _active_counts_by_server(rollout_name: str) -> dict[str, int]:
+	"""Slots this rollout is already using, per server."""
+	rows = frappe.db.sql(
+		f"""SELECT {_SERVER_OF_ROW} AS server, COUNT(*) AS count
+		FROM {_ROWS_WITH_SERVER}
+		WHERE rrs.rollout = %s AND rrs.status IN ('Starting', 'Running')
+		GROUP BY {_SERVER_OF_ROW}""",
+		rollout_name,
+		as_dict=True,
+	)
+	return {row.server: cint(row.count) for row in rows}
+
+
+def _servers_with_pending_sites(rollout_name: str, is_canary: bool) -> list[str]:
+	return frappe.db.sql_list(
+		f"""SELECT DISTINCT {_SERVER_OF_ROW}
+		FROM {_ROWS_WITH_SERVER}
+		WHERE rrs.rollout = %s AND rrs.status = 'Pending' AND rrs.is_canary = %s""",
+		(rollout_name, cint(is_canary)),
+	)
+
+
+def _pending_rows_on_server(rollout_name: str, is_canary: bool, server: str, limit: int) -> list[str]:
+	return frappe.db.sql_list(
+		f"""SELECT rrs.name
+		FROM {_ROWS_WITH_SERVER}
+		WHERE rrs.rollout = %s AND rrs.status = 'Pending' AND rrs.is_canary = %s
+			AND {_SERVER_OF_ROW} = %s
+		ORDER BY rrs.priority DESC, rrs.creation ASC
+		LIMIT %s""",
+		(rollout_name, cint(is_canary), server, cint(limit)),
+	)
+
+
+def _pick_batch(
+	rollout_name: str,
+	is_canary: bool,
+	available: int,
+	per_server_limit: int,
+	active_per_server: dict[str, int],
+) -> list[str]:
+	"""Fill the free slots without letting one server hog them.
+
+	Candidates are selected per server rather than in one ordered query: a
+	single query limited to the free slots could return nothing but rows for a
+	server that is already at its cap, and the rollout would stall with other
+	servers sitting idle. Least-busy server first, so capacity spreads instead
+	of piling onto whichever server happens to sort first.
+	"""
+	servers = sorted(
+		_servers_with_pending_sites(rollout_name, is_canary),
+		key=lambda server: (active_per_server.get(server, 0), server),
+	)
+	rows = []
+	for server in servers:
+		if available <= 0:
+			break
+		server_available = min(per_server_limit - active_per_server.get(server, 0), available)
+		if server_available <= 0:
+			continue
+		picked = _pending_rows_on_server(rollout_name, is_canary, server, server_available)
+		rows.extend(picked)
+		available -= len(picked)
+	return rows
 
 
 def attach_rollout_site(doc, method=None):
@@ -228,6 +451,22 @@ def start_rollout_site(rollout_site_name: str):
 		_skip_row(row, "Site is no longer eligible or has moved to another bench")
 		return
 
+	# Press's own deploy flow can schedule a Site Update for this site on its own:
+	# once a new Bench finishes building and goes Active, Bench.process_new_bench_job_update
+	# calls Bench Update.update_sites_on_server for whichever sites the operator selected
+	# in the deploy dialog -- independently of this rollout, and often minutes after the
+	# deploy click. If that already claimed this site, adopt its Site Update instead of
+	# racing schedule_update() against it (which would just lose to Press's own
+	# has_pending_updates() guard and land here as a skip for no real reason).
+	unclaimed = _find_unclaimed_pending_update(row.site)
+	if unclaimed:
+		logger.info(
+			f"start_rollout_site: {rollout_site_name} site={row.site} adopting "
+			f"pre-existing site_update={unclaimed} scheduled outside this rollout"
+		)
+		_mark_running(row, unclaimed)
+		return
+
 	# Canary sites always keep their backup, regardless of the setting -- they
 	# are the ones proving the update is safe in the first place. Skipping
 	# only applies once a site is past that gate. This is the one-off backup
@@ -256,6 +495,17 @@ def start_rollout_site(rollout_site_name: str):
 			)
 			_mark_running(row, existing)
 			return
+		# Narrow TOCTOU window: Press's deploy-triggered auto-update could have
+		# claimed this site in the moment between the upfront check above and this
+		# schedule_update() call. Same recovery, not a real failure.
+		unclaimed = _find_unclaimed_pending_update(row.site)
+		if unclaimed:
+			logger.info(
+				f"start_rollout_site: {rollout_site_name} site={row.site} adopting "
+				f"pre-existing site_update={unclaimed} after a scheduling race: {exc}"
+			)
+			_mark_running(row, unclaimed)
+			return
 		logger.info(f"start_rollout_site: {rollout_site_name} site={row.site} failed: {exc}")
 		frappe.log_error(
 			title=f"Release rollout site failed: {row.name}",
@@ -264,6 +514,24 @@ def start_rollout_site(rollout_site_name: str):
 		_skip_row(row, str(exc))
 	finally:
 		frappe.flags.release_rollout_site = None
+
+
+def _find_unclaimed_pending_update(site: str) -> str | None:
+	"""A Site Update for this site that already exists outside this rollout --
+	created by Press's own deploy-triggered auto-update -- and isn't tracked by
+	any Release Rollout Site row yet. Most recent first, since a site can only
+	have one truly active update at a time; older ones would be stale rows
+	Press itself would already refuse to touch."""
+	candidates = frappe.get_all(
+		"Site Update",
+		filters={"site": site, "status": ("in", ADOPTABLE_SITE_UPDATE_STATUSES)},
+		pluck="name",
+		order_by="creation desc",
+	)
+	for candidate in candidates:
+		if not frappe.db.exists("Release Rollout Site", {"site_update": candidate}):
+			return candidate
+	return None
 
 
 def _mark_running(row, site_update: str):
@@ -337,6 +605,7 @@ def _recount_and_advance(rollout_name: str):
 			# The bulk UPDATE above changed site rows out from under the counts
 			# computed above, so this specific recount cannot reuse them.
 			_recount(rollout.name)
+			_scale_burst_workers(rollout.name, start=False)
 			return
 		if canary_statuses and all(status in SUCCESSFUL_STATUSES for status in canary_statuses):
 			logger.info(f"_recount_and_advance: rollout={rollout_name} canary PASSED, advancing stage to Main")
@@ -354,6 +623,7 @@ def _recount_and_advance(rollout_name: str):
 			"status": "Completed With Failures" if failed else "Completed",
 			"stage": "Finished", "finished_at": rollout.finished_at or now_datetime(),
 		})
+		_scale_burst_workers(rollout.name, start=False)
 		return
 	logger.info(f"_recount_and_advance: rollout={rollout_name} counts={counts}, requesting next batch")
 	frappe.enqueue(
@@ -381,6 +651,10 @@ def cancel_rollout(rollout_name: str):
 		"status": "Cancelled", "stage": "Finished", "finished_at": rollout.finished_at or now,
 	})
 	_recount(rollout.name)
+	# Rows already Running drain rather than abort, and burst workers stop only
+	# once they finish -- stopwaitsecs on the program is what keeps a cancel
+	# from interrupting a migration mid-flight.
+	_scale_burst_workers(rollout.name, start=False)
 	logger.info(f"cancel_rollout: rollout={rollout_name} cancelled by user={frappe.session.user}")
 
 
@@ -429,6 +703,53 @@ def reconcile_running_rollouts():
 				frappe.db.set_value("Release Rollout Site", row_name, "status", "Pending")
 		frappe.db.set_value("Release Rollout", rollout_name, "last_reconciled_at", now_datetime())
 		_recount_and_advance(rollout_name)
+
+
+def _rollout_servers(rollout_name: str) -> list[str]:
+	"""Servers holding sites this rollout still has to touch."""
+	benches = frappe.get_all(
+		"Release Rollout Site", {"rollout": rollout_name}, pluck="source_bench", distinct=True
+	)
+	if not benches:
+		return []
+	return frappe.get_all("Bench", {"name": ("in", benches)}, pluck="server", distinct=True)
+
+
+def _scale_burst_workers(rollout_name: str, start: bool):
+	"""Add or give back agent worker capacity for this rollout's servers.
+
+	Agent workers are per server while max_concurrent_updates is per rollout,
+	so the extra capacity is only worth anything alongside a concurrency limit
+	above the default of 2 -- on its own it mostly stops backups and New Bench
+	image pulls from blocking updates. Never fails the rollout: a server whose
+	agent predates burst workers just logs and is skipped, since the rollout
+	itself is still perfectly able to run at the old speed.
+	"""
+	from press.agent import Agent
+
+	from mazeed_custom_press.agent_job_types import START_BURST_WORKERS, STOP_BURST_WORKERS
+
+	# create_agent_job directly rather than a method on Agent: these job types
+	# belong to this app, so their request paths live here too, instead of
+	# needing a patch to press.agent.Agent.
+	job_type = START_BURST_WORKERS if start else STOP_BURST_WORKERS
+	for server in _rollout_servers(rollout_name):
+		try:
+			Agent(server).create_agent_job(
+				job_type["name"],
+				job_type["request_path"],
+				reference_doctype="Release Rollout",
+				reference_name=rollout_name,
+			)
+			logger.info(
+				f"_scale_burst_workers: rollout={rollout_name} server={server} "
+				f"action={'start' if start else 'stop'}"
+			)
+		except Exception as exc:
+			logger.info(
+				f"_scale_burst_workers: rollout={rollout_name} server={server} "
+				f"action={'start' if start else 'stop'} failed (ignored): {exc}"
+			)
 
 
 def _lock_rollout(name: str):

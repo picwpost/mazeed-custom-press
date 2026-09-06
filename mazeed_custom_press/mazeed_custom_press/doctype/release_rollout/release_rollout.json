@@ -13,6 +13,7 @@
   "stage",
   "config_section",
   "max_concurrent_updates",
+  "max_concurrent_updates_per_server",
   "column_break_canary_size",
   "canary_size",
   "column_break_skip_backups",
@@ -84,6 +85,14 @@
    "fieldtype": "Int",
    "label": "Max Concurrent Updates",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "max_concurrent_updates_per_server",
+   "fieldtype": "Int",
+   "label": "Max Concurrent Updates Per Server",
+   "description": "Cap on sites updating at once on any single server. Agent workers are per server while Max Concurrent Updates is a total across the rollout, so without this a multi-server release group leaves most of its servers idle. 0 means no separate per-server cap -- the rollout total is used, which is how this behaved before the field existed.",
+   "reqd": 0
   },
   {
    "default": "2",

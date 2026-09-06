@@ -3,6 +3,8 @@ from __future__ import annotations
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
+from mazeed_custom_press import agent_job_types
+
 
 CUSTOM_FIELDS = {
 	"Press Settings": [
@@ -24,12 +26,29 @@ CUSTOM_FIELDS = {
 			"depends_on": "eval:doc.enable_release_rollout_queue",
 		},
 		{
+			"fieldname": "rollout_max_concurrent_updates_per_server",
+			"label": "Rollout Max Concurrent Updates Per Server",
+			"fieldtype": "Int",
+			# 0, not 2: a non-zero default would silently cap every existing
+			# rollout that raised the total, and since most release groups sit
+			# on one server that would cut throughput rather than raise it.
+			"default": "0",
+			"description": (
+				"Cap on sites updating at once on any single server. Agent workers are per "
+				"server while Rollout Max Concurrent Updates is a total across the rollout, so "
+				"without this a release group spread over several servers leaves most of them "
+				"idle. 0 means no separate per-server cap -- the rollout total is used."
+			),
+			"insert_after": "rollout_max_concurrent_updates",
+			"depends_on": "eval:doc.enable_release_rollout_queue",
+		},
+		{
 			"fieldname": "rollout_canary_size",
 			"label": "Rollout Canary Size",
 			"fieldtype": "Int",
 			"default": "2",
 			"description": "Default number of canary sites that must all succeed before the rest of the release group starts. 0 skips the canary gate.",
-			"insert_after": "rollout_max_concurrent_updates",
+			"insert_after": "rollout_max_concurrent_updates_per_server",
 			"depends_on": "eval:doc.enable_release_rollout_queue",
 		},
 		{
@@ -45,6 +64,22 @@ CUSTOM_FIELDS = {
 			),
 			"insert_after": "rollout_canary_size",
 			"depends_on": "eval:doc.enable_release_rollout_queue",
+		},
+	],
+	"Site": [
+		{
+			"fieldname": "use_as_rollout_canary",
+			"label": "Use as Rollout Canary",
+			"fieldtype": "Check",
+			"default": "0",
+			"description": (
+				"Update this site first in every rollout, and hold the rest back until it "
+				"succeeds. Use it for sites you are willing to break -- internal workspaces, "
+				"staging tenants. The flag is a standing preference, not a per-deploy "
+				"instruction: if the site is later archived or moved out of the group being "
+				"rolled out, it is simply not picked, and the rollout still runs."
+			),
+			"insert_after": "status",
 		},
 	],
 	"Site Update": [
@@ -93,6 +128,10 @@ def after_migrate():
 	# metadata quirks (e.g. duplicate fieldnames on Press Settings) that would
 	# otherwise abort installation of these unrelated fields.
 	create_custom_fields(CUSTOM_FIELDS, ignore_validate=True, update=True)
+	# Must run after Press's sync_fixtures(), which re-imports and overwrites
+	# every Agent Job Type it defines. frappe runs after_migrate hooks last, so
+	# this re-applies our steps on top of the freshly synced fixtures.
+	agent_job_types.sync()
 	if frappe.db.table_exists("Release Rollout Site"):
 		frappe.db.add_unique("Release Rollout Site", ["rollout", "site"])
 		frappe.db.add_index("Release Rollout Site", ["rollout", "status"])

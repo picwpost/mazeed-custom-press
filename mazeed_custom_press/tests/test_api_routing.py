@@ -60,7 +60,10 @@ class TestFlagAndRouter(FrappeTestCase):
 			patch.object(router, "create_release_rollout", return_value=response) as create,
 		):
 			result = router.update_all_sites(name="some-group")
-		create.assert_called_once_with("some-group", source_bench=None)
+		# canary_sites=None is the "no override" case: selection falls through to
+		# the site flag, then to first-N by name. The dashboard button sends no
+		# canary list, so this is the call it makes.
+		create.assert_called_once_with("some-group", source_bench=None, canary_sites=None)
 		legacy.assert_not_called()
 		self.assertEqual(result, response)
 
