@@ -16,6 +16,22 @@ Entry format:
 
 ---
 
+## 2026-09-06 — fix(install): add missing index on Site Backup.site
+- Commit: `c8cf60e`
+- What changed: `after_migrate()` now also calls
+  `frappe.db.add_index("Site Backup", ["site", "creation"])`.
+- Why: A newer `saas-restore` slow-query-log entry (2026-09-06 11:02
+  UTC+3) showed `SELECT DISTINCT name FROM tabSite Backup WHERE site =
+  ... LIMIT 100 OFFSET 0` full-scanning (49,621 rows examined, 58
+  returned) from the dashboard's Site "Backups" tab and the global
+  Site Backups page, both of which filter purely on `site` ordered by
+  `creation desc`. The composite index added in `af68687` leads with
+  `status`/`files_availability`/`physical`/`offsite`, so it doesn't
+  cover this query shape at all -- same root cause and fix pattern as
+  the earlier `Agent Job.site` index (`497ecf8`), just missed in the
+  first pass since this specific query hadn't shown up in the log yet.
+- Files: `mazeed_custom_press/install.py`
+
 ## 2026-09-06 — fix(install): add missing indexes on Site and Site Update
 - Commit: `4c8cfe5`
 - What changed: `after_migrate()` now also calls
