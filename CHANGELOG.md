@@ -16,6 +16,20 @@ Entry format:
 
 ---
 
+## 2026-09-06 — fix(install): add missing index on Agent Job.site
+- Commit: `497ecf8`
+- What changed: `after_migrate()` now also calls
+  `frappe.db.add_index("Agent Job", ["site", "creation"])`.
+- Why: Slow query log showed `SELECT DISTINCT name FROM tabAgent Job WHERE
+  site = ...` doing a full table scan (Full_scan: Yes, Rows_examined:
+  19705). Press's `on_doctype_update` for Agent Job only indexes
+  `(status, server)`, `(reference_doctype, reference_name)`, and
+  `(creation)` -- nothing covers `site`, which is filtered on by the
+  dashboard's Site "Jobs" tab and several `frappe.db.exists("Agent Job",
+  {"site": ...})` checks in `press/api/site.py`. Fixed here instead of
+  patching Press directly.
+- Files: `mazeed_custom_press/install.py`
+
 ## 2026-08-31 — feat(saas_site): route mazeed_copilot through Phase 1 pooled-site rename
 - Commit: `9b790bc`
 - What changed: Added `mazeed_copilot` to the app-name check in
