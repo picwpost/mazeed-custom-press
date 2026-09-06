@@ -58,3 +58,42 @@ class TestSaasOverrides(FrappeTestCase):
 		site.save.assert_called_once()
 		site.remove_dns_record.assert_called_once_with("proxy-1")
 		self.assertEqual(site.status, "Pending")
+
+	def test_rename_pooled_site_erpnext_commits_before_subscription_and_agent_job(self):
+		site = CustomSaasSite.__new__(CustomSaasSite)
+		site.app = "my-app"
+		site.server = "server-1"
+		site.configuration = []
+		site._update_configuration = Mock()
+		site.save = Mock()
+		site.create_subscription = Mock()
+		site.reload = Mock()
+
+		call_order = []
+		site.save.side_effect = lambda *a, **k: call_order.append("save")
+		site.create_subscription.side_effect = lambda *a, **k: call_order.append("create_subscription")
+
+		with (
+			patch("mazeed_custom_press.overrides.saas_site.get_saas_site_plan", return_value="free"),
+			patch(
+				"mazeed_custom_press.overrides.saas_site.frappe.utils.add_days",
+				return_value=Mock(strftime=Mock(return_value="2026-08-01")),
+			),
+			patch(
+				"mazeed_custom_press.overrides.saas_site.frappe.db.commit",
+				side_effect=lambda: call_order.append("commit"),
+			) as mock_commit,
+			patch("mazeed_custom_press.overrides.saas_site.Agent") as mock_agent_cls,
+		):
+			mock_agent = Mock()
+			mock_agent_cls.return_value = mock_agent
+
+			result = site._rename_pooled_site_erpnext()
+
+		# The commit must land strictly between the claim/save and the
+		# subscription + Agent Job work, otherwise all three still ride in
+		# one long transaction and we're back to the original lock timeout.
+		self.assertEqual(call_order, ["save", "commit", "create_subscription"])
+		mock_commit.assert_called_once()
+		mock_agent.update_site_config.assert_called_once_with(site)
+		self.assertEqual(result, site)

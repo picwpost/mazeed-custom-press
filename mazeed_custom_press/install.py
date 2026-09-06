@@ -93,6 +93,27 @@ CUSTOM_FIELDS = {
 			"unique": 1,
 		}
 	],
+	"Cluster": [
+		{
+			"fieldname": "custom_agent_repository_owner",
+			"label": "Custom Agent Repository Owner",
+			"fieldtype": "Data",
+			"description": (
+				"Overrides Press Settings' global agent_repository_owner for every Server/Proxy "
+				"Server in this cluster. Leave blank to use the global default -- only set this "
+				"on a cluster that should run a different agent fork/branch (e.g. a development "
+				"cluster validating agent changes before they reach production)."
+			),
+			"insert_after": "description",
+		},
+		{
+			"fieldname": "custom_agent_branch",
+			"label": "Custom Agent Branch",
+			"fieldtype": "Data",
+			"description": "Overrides Press Settings' global branch for the agent repository, scoped to this cluster. Leave blank to use the global default.",
+			"insert_after": "custom_agent_repository_owner",
+		},
+	],
 }
 
 
@@ -115,3 +136,11 @@ def after_migrate():
 		frappe.db.add_unique("Release Rollout Site", ["rollout", "site"])
 		frappe.db.add_index("Release Rollout Site", ["rollout", "status"])
 		frappe.db.add_index("Release Rollout Site", ["site_update"])
+
+	# Agent Job has no index covering `site` (Press's on_doctype_update only
+	# covers (status, server), (reference_doctype, reference_name), and
+	# (creation)), so every site-scoped Agent Job query -- the dashboard's
+	# Site "Jobs" tab and several frappe.db.exists("Agent Job", {"site": ...})
+	# checks in press/api/site.py -- does a full table scan. Adding it here
+	# instead of patching Press directly.
+	frappe.db.add_index("Agent Job", ["site", "creation"])

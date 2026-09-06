@@ -18,7 +18,7 @@ class CustomSaasSite(SaasSite):
 
 	def rename_pooled_site(self, account_request=None, subdomain=None, config=None):
 		"""Rename a pooled site and carry any config payload into the rename job."""
-		if self.app in ("erpnext", "mazeed_theme"):
+		if self.app in ("erpnext", "mazeed_theme", "mazeed_copilot"):
 			return self._rename_pooled_site_erpnext(account_request=account_request, config=config)
 
 		# any future app: original behaviour — Phase 1 + Phase 2
@@ -46,6 +46,11 @@ class CustomSaasSite(SaasSite):
 		if config:
 			self._update_configuration(self._normalize_config(config), save=False)
 		self.save(ignore_permissions=True)
+		# Commit here so the site claim + save don't stay locked through
+		# subscription creation and the Agent Job insert below — holding one
+		# long transaction across all of it was causing lock wait timeouts
+		# under concurrent pooled-site requests.
+		frappe.db.commit()
 		self.create_subscription(plan)
 		self.reload()
 		Agent(self.server).update_site_config(self)

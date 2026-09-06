@@ -212,6 +212,7 @@ before_request = [
 	"mazeed_custom_press.overrides.bench.apply_overrides",
 	"mazeed_custom_press.overrides.site_update.apply_overrides",
 	"mazeed_custom_press.overrides.agent_job.apply_overrides",
+	"mazeed_custom_press.overrides.agent_source.apply_overrides",
 ]
 # after_request = ["mazeed_custom_press.utils.after_request"]
 
@@ -225,6 +226,7 @@ before_job = [
 	"mazeed_custom_press.overrides.bench.apply_overrides",
 	"mazeed_custom_press.overrides.site_update.apply_overrides",
 	"mazeed_custom_press.overrides.agent_job.apply_overrides",
+	"mazeed_custom_press.overrides.agent_source.apply_overrides",
 ]
 # after_job = ["mazeed_custom_press.utils.after_job"]
 
