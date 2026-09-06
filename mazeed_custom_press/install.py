@@ -97,3 +97,11 @@ def after_migrate():
 		frappe.db.add_unique("Release Rollout Site", ["rollout", "site"])
 		frappe.db.add_index("Release Rollout Site", ["rollout", "status"])
 		frappe.db.add_index("Release Rollout Site", ["site_update"])
+
+	# Agent Job has no index covering `site` (Press's on_doctype_update only
+	# covers (status, server), (reference_doctype, reference_name), and
+	# (creation)), so every site-scoped Agent Job query -- the dashboard's
+	# Site "Jobs" tab and several frappe.db.exists("Agent Job", {"site": ...})
+	# checks in press/api/site.py -- does a full table scan. Adding it here
+	# instead of patching Press directly.
+	frappe.db.add_index("Agent Job", ["site", "creation"])
