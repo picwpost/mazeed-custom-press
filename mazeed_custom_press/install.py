@@ -43,6 +43,23 @@ CUSTOM_FIELDS = {
 			"depends_on": "eval:doc.enable_release_rollout_queue",
 		},
 		{
+			"fieldname": "skip_build_search_index",
+			"label": "Skip Building Website Search Index",
+			"fieldtype": "Check",
+			"default": "0",
+			"description": (
+				"Stop rebuilding the Whoosh website search index during site updates and "
+				"activations. That index is read only by the search box on the public website "
+				"-- not desk global search, the awesome bar or link lookups -- and building it "
+				"renders every public route in every installed app, serially, which costs "
+				"minutes per site. It runs after maintenance mode is lifted, so this does not "
+				"change downtime; it frees the rollout slot sooner. Safe to enable when no site "
+				"serves a public portal: a site that never builds the index returns zero "
+				"portal-search results rather than erroring."
+			),
+			"insert_after": "rollout_skip_backups_for_main_stage",
+		},
+		{
 			"fieldname": "rollout_canary_size",
 			"label": "Rollout Canary Size",
 			"fieldtype": "Int",

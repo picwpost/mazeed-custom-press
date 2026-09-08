@@ -165,23 +165,122 @@ def get_rollout_summary(name):
 		cint(data.get("max_concurrent_updates")),
 	)
 	data.progress_percent = (data.completed_count / cint(data.total_sites) * 100) if cint(data.total_sites) else 0
+	data.update(get_queue_wait_stats(name))
 	return data
+
+
+def get_queue_wait_stats(rollout_name: str) -> dict:
+	"""How long this rollout's sites actually spent queueing, not updating.
+
+	The headline number for "is Pending -> Updating still slow": it is measured
+	from the rollout's own sites rather than guessed, so a large median points
+	at delivery or agent worker capacity, while a large max next to a small
+	median points at one stuck server.
+	"""
+	waits = frappe.db.sql(
+		"""SELECT TIMESTAMPDIFF(SECOND, su.update_start, aj.start) AS wait
+		FROM `tabRelease Rollout Site` rrs
+		JOIN `tabSite Update` su ON su.name = rrs.site_update
+		JOIN `tabAgent Job` aj ON aj.name = su.update_job
+		WHERE rrs.rollout = %s AND su.update_start IS NOT NULL AND aj.start IS NOT NULL""",
+		rollout_name,
+		pluck=True,
+	)
+	waits = sorted(cint(wait) for wait in waits if wait is not None and cint(wait) >= 0)
+	if not waits:
+		return {"queue_wait_median": None, "queue_wait_max": None, "queue_wait_samples": 0}
+	middle = len(waits) // 2
+	median = waits[middle] if len(waits) % 2 else (waits[middle - 1] + waits[middle]) // 2
+	return {
+		"queue_wait_median": median,
+		"queue_wait_max": waits[-1],
+		"queue_wait_samples": len(waits),
+	}
+
+
+# Wait between the Site Update being created and an agent worker actually
+# picking the job up. This is the "Pending" the operator sees on the site, and
+# it is queueing, not work -- so it is worth showing separately from the update
+# itself rather than hiding both inside one duration.
+QUEUE_WAIT_WARN_SECONDS = 60
+QUEUE_WAIT_BAD_SECONDS = 300
 
 
 @frappe.whitelist()
 def get_rollout_sites(name, status=None, stage=None, start=0, page_length=50):
 	_check_rollout_access(name)
-	filters = {"rollout": name}
+	conditions = ["rrs.rollout = %(rollout)s"]
+	values = {"rollout": name}
 	if status:
-		filters["status"] = status
+		conditions.append("rrs.status = %(status)s")
+		values["status"] = status
 	if stage == "Canary":
-		filters["is_canary"] = 1
+		conditions.append("rrs.is_canary = 1")
 	elif stage == "Main":
-		filters["is_canary"] = 0
-	page_length = min(max(cint(page_length), 1), 100)
-	return frappe.get_all(
-		"Release Rollout Site", filters=filters,
-		fields=["name", "site", "source_bench", "status", "site_update", "is_canary", "last_error", "started_at", "finished_at"],
-		order_by="FIELD(status, 'Running', 'Starting', 'Fatal', 'Skipped', 'Cancelled', 'Pending', 'Recovered', 'Success'), creation asc",
-		start=cint(start), page_length=page_length,
+		conditions.append("rrs.is_canary = 0")
+
+	values["page_length"] = min(max(cint(page_length), 1), 100)
+	values["start"] = cint(start)
+
+	# Joined rather than stored on the row: the numbers stay correct for a
+	# still-running update, and there is no second copy of the truth to drift.
+	# Bounded by page_length, so at most 100 joined rows per call.
+	rows = frappe.db.sql(
+		f"""SELECT
+			rrs.name, rrs.site, rrs.source_bench, rrs.status, rrs.site_update,
+			rrs.is_canary, rrs.last_error, rrs.started_at, rrs.finished_at,
+			s.status AS site_status,
+			su.update_start, su.update_duration, su.deploy_type, su.skipped_backups,
+			su.status AS site_update_status,
+			aj.start AS job_start, aj.end AS job_end, aj.retry_count
+		FROM `tabRelease Rollout Site` rrs
+		LEFT JOIN `tabSite` s ON s.name = rrs.site
+		LEFT JOIN `tabSite Update` su ON su.name = rrs.site_update
+		LEFT JOIN `tabAgent Job` aj ON aj.name = su.update_job
+		WHERE {" AND ".join(conditions)}
+		ORDER BY FIELD(rrs.status, 'Running', 'Starting', 'Fatal', 'Skipped',
+			'Cancelled', 'Pending', 'Recovered', 'Success'), rrs.creation ASC
+		LIMIT %(start)s, %(page_length)s""",
+		values,
+		as_dict=True,
 	)
+	now = frappe.utils.now_datetime()
+	for row in rows:
+		_annotate_timings(row, now)
+	return rows
+
+
+def _annotate_timings(row, now):
+	"""Split the elapsed time into queue wait and actual update work.
+
+	Agent Job.start is the agent's own timestamp for when a worker began, so
+	the gap before it is genuine queueing -- press-side delivery plus the wait
+	for a free agent worker -- and not something the update could have avoided.
+	"""
+	row["queue_seconds"] = _seconds_between(row.get("update_start"), row.get("job_start"))
+	if row.get("update_duration"):
+		row["update_seconds"] = cint(row["update_duration"])
+	else:
+		# Still in flight: measure against now so the figure ticks up live.
+		row["update_seconds"] = _seconds_between(row.get("job_start"), row.get("job_end") or now)
+
+	# Nothing has been delivered yet, so the whole elapsed time is queueing.
+	if row["queue_seconds"] is None and row.get("update_start") and not row.get("job_start"):
+		row["queue_seconds"] = _seconds_between(row["update_start"], now)
+
+	queue_seconds = row["queue_seconds"]
+	if queue_seconds is None:
+		row["queue_severity"] = None
+	elif queue_seconds >= QUEUE_WAIT_BAD_SECONDS:
+		row["queue_severity"] = "bad"
+	elif queue_seconds >= QUEUE_WAIT_WARN_SECONDS:
+		row["queue_severity"] = "warn"
+	else:
+		row["queue_severity"] = "ok"
+
+
+def _seconds_between(start, end):
+	if not start or not end:
+		return None
+	seconds = frappe.utils.time_diff_in_seconds(end, start)
+	return cint(seconds) if seconds and seconds >= 0 else 0
